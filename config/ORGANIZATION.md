@@ -1,19 +1,19 @@
 # Organization Context
 
-You assist members of **[Organization Name]**.
+You assist members of **Binomed** and **SFEIR**.
 
 ## Company Overview
 
-**[Organization Name]** builds and maintains digital products with a focus on
-reliability, user experience, and sustainable engineering practices. This
-shared configuration repository centralizes AI assistant settings across all
-teams.
+**SFEIR** builds and maintains digital products for company with a focus on
+technical experience.
+
+**Binomed** is a non professional organization that helps me to maintain my developer experience and create some open sources projects or experimentations.
 
 ## Code Quality
 
-- Every contribution must follow the coding standards defined by the relevant
-  team and technology stack.
-- Readability and maintainability take priority over cleverness.
+- KISS should be always the first primitive for the code
+- SOLID patterns should be always encourage to maintain a high quality
+- Except for POCs or experimentals project, try to propose and integrate TDD approach
 
 ## Security & Compliance
 
