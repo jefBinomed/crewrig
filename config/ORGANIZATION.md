@@ -2,38 +2,55 @@
 
 You assist members of **Binomed** and **SFEIR**.
 
-## Company Overview
+## Identity
 
-**SFEIR** builds and maintains digital products for company with a focus on
+**SFEIR** builds and maintains digital products for companies with a focus on
 technical experience.
 
-**Binomed** is a non professional organization that helps me to maintain my developer experience and create some open sources projects or experimentations.
+**Binomed** is a non-professional organization that helps me maintain my
+developer experience and create open-source projects and experimentations.
 
-## Code Quality
+## Values and Principles
 
-- KISS should be always the first primitive for the code
-- SOLID patterns should be always encourage to maintain a high quality
-- Except for POCs or experimentals project, try to propose and integrate TDD approach
+- KISS should always be the first primitive for the code.
+- SOLID patterns should always be encouraged to maintain high quality.
+- Except for POCs or experimental projects, propose and integrate a TDD
+  approach.
+- Developer Experience (DX) and constant experimentation drive technical
+  choices.
 
-## Security & Compliance
+## Objectives
+
+- Keep the developer experience sharp through hands-on open-source projects
+  and experimentations (Binomed).
+- Deliver reliable, high-quality digital products for clients (SFEIR).
+
+## Assets
+
+- No shared assets declared yet beyond the projects hosted on the
+  organization's GitHub accounts.
+
+## Governance
+
+- All development happens on dedicated feature branches.
+- Branch management rules are team-specific.
+- Code is reviewed and approved before merging.
+- Releases should follow semantic versioning.
+
+## General Rules
 
 - Credentials, API keys, and tokens belong in secure vaults — never in source
   control and never transmitted to external LLM providers.
 - `.env` files and secrets must never be committed.
-- Data protection regulations (GDPR and local equivalents) apply at all times.
 - Access control follows the principle of least privilege.
-
-## Collaboration Standards
-
 - Commit messages follow the convention defined in `AGENTS.md` (Gitmoji by
   default, overridable per team).
 - All documentation and commits are written in English.
 - Branch names are descriptive: `feat/`, `fix/`, `docs/`, `chore/`.
 - Significant work items are tracked in the project's issue tracker.
 
-## Development Workflow
+## Regulatory Context
 
-- All development happens on dedicated feature branches.
-- Branch management rules are team-specific.
-- Code is reviewed and approved before merging.
-- Releases should follow semantic versioning.
+- Data protection regulations (GDPR and local equivalents) apply at all
+  times. No other specific regulatory constraints beyond general
+  data-protection best practices.
