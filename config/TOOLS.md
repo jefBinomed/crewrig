@@ -41,7 +41,11 @@ These tools are installed and managed outside CrewRig; use them when present.
   user-gate validation backend.
 - `rtk` — token-optimized CLI proxy (Claude Code hook); commands are
   rewritten transparently.
-- `graphify` — turns any input into a knowledge graph (`/graphify`).
+- `graphify` — turns any input (code, docs, papers, media) into a persistent
+  knowledge graph (`/graphify`). When a repository contains `graphify-out/`,
+  answer codebase and architecture questions with a graphify query first
+  (`graphify query`, `graphify path`, `graphify explain`). The skill is owned
+  by graphify's own installer (`graphify install`), not by CrewRig.
 
 ## Workflow Preferences
 
