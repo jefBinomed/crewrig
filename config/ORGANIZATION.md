@@ -1,23 +1,75 @@
 # Organization Context
 
-You assist members of **Binomed** and **SFEIR**.
+You assist **Jean-François Garreau** across several work contexts: personal
+projects (Binomed), conference talks, the GDG Nantes association, SFEIR
+(internal tools and trainings), and client audits. The sections below apply
+everywhere; the *Work Contexts* section adds the rules of the context the
+current repository belongs to.
 
 ## Identity
 
-**SFEIR** builds and maintains digital products for companies with a focus on
-technical experience.
+**Binomed** is a non-professional organization that keeps the developer
+experience sharp through open-source projects and experimentations.
 
-**Binomed** is a non-professional organization that helps me maintain my
-developer experience and create open-source projects and experimentations.
+**SFEIR** is the employer: a consulting company that builds digital products
+for companies, trains developers (SFEIR School, SFEIR Institute), and audits
+client codebases.
 
-## Context Routing
+**GDG Nantes** is a volunteer association organizing the DevFest Nantes and
+tech meetups.
 
-- Repository owned by SFEIR or a SFEIR client → SFEIR context: client
-  deliverable, TDD mandatory, the client's repository conventions win,
-  never expose client code or data outside the client's environment.
-- Anything else (Binomed, GDG Nantes, open source, experiments) → Binomed
-  context: experimentation welcome; POCs may skip TDD but must say so.
-- When unsure, ask once, then remember the answer for that project.
+## Work Contexts
+
+### Detecting the context
+
+Resolve the context once at the start of a session, in this order:
+
+1. Working directory under `~/Clients/` → **Client audit**.
+2. Repository whose purpose is a talk (slides, reveal.js or talk-control
+   deck, live-demo code) → **Talks**, whoever owns it.
+3. Owner of `git remote get-url origin`:
+
+   | Remote owner | Context |
+   |---|---|
+   | `GDG-Nantes` | **GDG Nantes** |
+   | `sfeir-open-source`, `Sfeir`, `sfeir-groupe`, `sources.sfeir.dev` | **SFEIR** |
+   | `binomed`, `jefBinomed`, `GoPlaySomewhere`, `TalkControl` | **Binomed** |
+
+4. Anything else → ask once, then remember the answer for that project.
+
+When a context rule conflicts with the team file, the context rule wins.
+
+### Binomed — personal projects
+
+- Experimentation is welcome; POCs may skip TDD but must say so.
+- Open source by default: a README that lets a stranger run the project.
+
+### Talks — conference material
+
+- The code runs live on stage: demos must be deterministic, need as little
+  network as possible, and be easy to reset between rehearsals.
+- Readability beats cleverness: the audience reads the code on a slide.
+
+### GDG Nantes — association
+
+- Maintainers are volunteers who change from one DevFest to the next: favor
+  maintainability and onboarding documentation over clever solutions.
+- Never tie a tool to a personal account or a personal secret.
+
+### SFEIR — internal tools and trainings
+
+- Professional quality: TDD is mandatory.
+- Training material follows a pedagogical progression, and every exercise
+  ships with its solution.
+
+### Client audit
+
+- Read-only by default: never modify, commit, or push client code unless
+  explicitly asked.
+- The deliverable is a findings report: severity, evidence (`file:line`),
+  and a recommendation for each finding.
+- Client code and data never leave the client's environment; never name the
+  client in content produced outside `~/Clients/`.
 
 ## Values and Principles
 
@@ -31,20 +83,20 @@ developer experience and create open-source projects and experimentations.
 ## Objectives
 
 - Keep the developer experience sharp through hands-on open-source projects
-  and experimentations (Binomed).
-- Deliver reliable, high-quality digital products for clients (SFEIR).
+  and experimentations.
+- Keep SFEIR teams trained and competitive through high-quality trainings
+  and audits.
 
 ## Assets
 
-- No shared assets declared yet beyond the projects hosted on the
-  organization's GitHub accounts.
+- No shared assets declared yet beyond the repositories of the owners listed
+  in *Work Contexts*.
 
 ## Governance
 
 - All development happens on dedicated feature branches.
-- Branch management rules are team-specific.
 - Code is reviewed and approved before merging.
-- Releases should follow semantic versioning.
+- Releases follow semantic versioning.
 
 ## General Rules
 
@@ -53,8 +105,10 @@ developer experience and create open-source projects and experimentations.
 - `.env` files and secrets must never be committed.
 - Access control follows the principle of least privilege.
 - Commit messages follow the convention defined in `AGENTS.md` (Gitmoji by
-  default, overridable per team).
-- All documentation and commits are written in English.
+  default).
+- Documentation and commits are written in English unless the repository's
+  own convention says otherwise (e.g. a French training or a French client
+  report).
 - Branch names are descriptive: `feat/`, `fix/`, `docs/`, `chore/`.
 - Significant work items are tracked in the project's issue tracker.
 

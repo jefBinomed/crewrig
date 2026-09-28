@@ -15,7 +15,8 @@ and open source or inner source projects.
 
 ## Development Practices
 
-- Organization rules apply (see `config/ORGANIZATION.md`, Context Routing).
+- Organization rules apply, including the rules of the current work context
+  (see `config/ORGANIZATION.md`, *Work Contexts*).
 
 ## Documentation
 
