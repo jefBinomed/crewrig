@@ -2,21 +2,26 @@
 
 ## Mission
 
-Mix team that inclue only one profile (me) to work on different topics like AI consulting, AI training, tech Speaking, open source or inner source projects
+A one-person team working across AI consulting, AI training, tech speaking,
+and open source or inner source projects.
 
 ## Technology Stack
 
 - **Infrastructure:** GCP environment
 - **CI/CD:** GitHub Actions, self-hosted runners, Docker
-- **Observability:** N/A
-- **Languages:** Generally Typescript, web technologies, liHTML, and sometimes Java
+- **Observability:** none by default; add it only when a project needs it
+- **Languages:** mostly TypeScript and web technologies (Lit / lit-html),
+  sometimes Java
 
 ## Development Practices
 
-- Sames as the organization
-
+- Organization rules apply (see `config/ORGANIZATION.md`, Context Routing).
 
 ## Documentation
 
-- **Doc-as-code:** always provide doc as code in the used repository
+- **Doc-as-code:** always keep the documentation in the repository it
+  describes.
 
+## Issue Tracking
+
+- GitHub issues of the repository concerned.

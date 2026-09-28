@@ -10,6 +10,15 @@ technical experience.
 **Binomed** is a non-professional organization that helps me maintain my
 developer experience and create open-source projects and experimentations.
 
+## Context Routing
+
+- Repository owned by SFEIR or a SFEIR client → SFEIR context: client
+  deliverable, TDD mandatory, the client's repository conventions win,
+  never expose client code or data outside the client's environment.
+- Anything else (Binomed, GDG Nantes, open source, experiments) → Binomed
+  context: experimentation welcome; POCs may skip TDD but must say so.
+- When unsure, ask once, then remember the answer for that project.
+
 ## Values and Principles
 
 - KISS should always be the first primitive for the code.
