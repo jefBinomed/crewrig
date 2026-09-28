@@ -184,7 +184,7 @@ OUT="$(apply_org_mcp_servers "$ORG_NATIVE" "$CFG" "$PRE" "$BK" 2>&1)"
 jq -e '.mcpServers.mempalace.command == "bash"' "$CFG" >/dev/null 2>&1 \
   && ok "R10: reserved 'mempalace' stays framework-managed (org 'evil' NOT applied)" \
   || bad "R10: mempalace must not be displaced by the org declaration"
-printf '%s' "$OUT" | grep -q "mempalace" \
+grep -q "mempalace" <<< "$OUT" \
   && ok "R10: non-silent warning names the reserved collision" \
   || bad "R10: missing reserved-collision warning (out: $OUT)"
 
@@ -197,7 +197,7 @@ printf '%s' "$OUT" | grep -q "mempalace" \
 jq -e '.mcpServers.atlassian.httpUrl and (.mcpServers.atlassian | has("command") | not)' "$CFG" >/dev/null 2>&1 \
   && ok "R11: org 'atlassian' overrides the operator entry (org wins)" \
   || bad "R11: org atlassian should win over operator"
-if printf '%s' "$OUT" | grep -q "'atlassian'" && printf '%s' "$OUT" | grep -qF "$BK"; then
+if grep -q "'atlassian'" <<< "$OUT" && grep -qF "$BK" <<< "$OUT"; then
   ok "R11: non-silent warning names 'atlassian' and points at the backup"
 else
   bad "R11: missing override warning + backup pointer (out: $OUT)"
@@ -279,7 +279,7 @@ LOG="$TMP_ROOT/claude-r10.log"; : > "$LOG"
 export CLAUDE_STUB_LOG="$LOG" CLAUDE_STUB_REGISTERED="" CLAUDE_STUB_ADD_FAIL=0
 printf '{"mcpServers":{"mempalace":{"transport":"stdio","command":"evil"}}}' > "$TMP_ROOT/man-r10.json"
 R10_OUT="$(register_org_mcp_claude "$TMP_ROOT/man-r10.json" "$TMP_ROOT/nonexistent.claude.json" 2>&1)"
-printf '%s' "$R10_OUT" | grep -q "mempalace" && ok "claude R10: reserved skip warns" || bad "claude R10: no warning ($R10_OUT)"
+grep -q "mempalace" <<< "$R10_OUT" && ok "claude R10: reserved skip warns" || bad "claude R10: no warning ($R10_OUT)"
 grep -q "mcp add" "$LOG" && bad "claude R10: reserved name must NOT be added" || ok "claude R10: no 'mcp add' issued for reserved name"
 
 # 5b. New non-reserved name -> `claude mcp add` with the translated argv.
@@ -299,7 +299,7 @@ export CLAUDE_STUB_LOG="$LOG" CLAUDE_STUB_REGISTERED="acme" CLAUDE_STUB_ADD_FAIL
 printf '{"mcpServers":{"acme":{"transport":"stdio","command":"acme-NEW"}}}' > "$TMP_ROOT/man-r11.json"
 R11_OUT="$(register_org_mcp_claude "$TMP_ROOT/man-r11.json" "$CLAUDE_CFG" 2>&1)"
 grep -q "mcp remove" "$LOG" && ok "claude R11: attempts remove-then-add" || bad "claude R11: no remove attempted (log: $(cat "$LOG"))"
-printf '%s' "$R11_OUT" | grep -qi "restor" \
+grep -qi "restor" <<< "$R11_OUT" \
   && ok "claude R11 guard: a failed re-add is surfaced (restore message)" \
   || bad "claude R11 guard: failed re-add not surfaced (out: $R11_OUT)"
 if [ "$(jq -r '.mcpServers.acme.command' "$CLAUDE_CFG")" = "OPERATOR-ORIGINAL" ]; then
@@ -315,30 +315,40 @@ unset CLAUDE_STUB_LOG CLAUDE_STUB_REGISTERED CLAUDE_STUB_ADD_FAIL
 echo "6. Setup-script call-site parity"
 # ---------------------------------------------------------------------------
 # The three file setups must translate + fold org servers AFTER the 0089 merge.
+# <fold_file> holds the two folds: the setup script itself for Copilot and
+# Antigravity, scripts/lib/gemini-settings.sh for Gemini, whose setup calls
+# gemini_settings_write (spec 0214). The translation stays in the setup.
 check_file_setup() {
-  local script="$1" cli="$2"
-  local path="$SETUP_DIR/$script"
+  local script="$1" cli="$2" fold_file="${3:-$SETUP_DIR/$1}"
+  local path="$SETUP_DIR/$script" fold_label
+  fold_label="${fold_file#"$SETUP_DIR"/}"
   if [ ! -f "$path" ]; then bad "$script: not found"; return; fi
+  if [ ! -f "$fold_file" ]; then bad "$fold_label: not found"; return; fi
 
   grep -q "org_mcp_to_native $cli" "$path" \
     && ok "$script: translates via org_mcp_to_native $cli" \
     || bad "$script: missing org_mcp_to_native $cli"
-  grep -q "apply_org_mcp_servers" "$path" \
-    && ok "$script: folds via apply_org_mcp_servers" \
-    || bad "$script: missing apply_org_mcp_servers"
+  grep -q "apply_org_mcp_servers" "$fold_file" \
+    && ok "$fold_label: folds via apply_org_mcp_servers" \
+    || bad "$fold_label: missing apply_org_mcp_servers"
 
+  # Call sites only (a quoted first argument), never a comment naming them.
   local merge_ln apply_ln
-  merge_ln="$(grep -nF 'merge_preexisting_mcp_servers "$PREEXISTING_MCP"' "$path" | head -1 | cut -d: -f1)"
-  apply_ln="$(grep -nF 'apply_org_mcp_servers' "$path" | head -1 | cut -d: -f1)"
+  merge_ln="$(grep -nF 'merge_preexisting_mcp_servers "' "$fold_file" | head -1 | cut -d: -f1)"
+  apply_ln="$(grep -nF 'apply_org_mcp_servers "' "$fold_file" | head -1 | cut -d: -f1)"
   if [ -n "$merge_ln" ] && [ -n "$apply_ln" ] && [ "$apply_ln" -gt "$merge_ln" ]; then
-    ok "$script: org fold (l$apply_ln) follows the 0089 merge (l$merge_ln)"
+    ok "$fold_label: org fold (l$apply_ln) follows the 0089 merge (l$merge_ln)"
   else
-    bad "$script: org fold must follow the 0089 merge (merge=$merge_ln apply=$apply_ln)"
+    bad "$fold_label: org fold must follow the 0089 merge (merge=$merge_ln apply=$apply_ln)"
   fi
 }
-check_file_setup setup-gemini-interactive.sh      gemini
+check_file_setup setup-gemini-interactive.sh      gemini      "$SETUP_DIR/lib/gemini-settings.sh"
 check_file_setup setup-copilot-interactive.sh     copilot
 check_file_setup setup-antigravity-interactive.sh antigravity
+GEMINI_SETUP="$SETUP_DIR/setup-gemini-interactive.sh"
+grep -qE '^[[:space:]]*gemini_settings_write[[:space:]].*"\$ORG_MCP_NATIVE"' "$GEMINI_SETUP" \
+  && ok "setup-gemini-interactive.sh: hands ORG_MCP_NATIVE to gemini_settings_write" \
+  || bad "setup-gemini-interactive.sh: gemini_settings_write is not given ORG_MCP_NATIVE"
 
 # Claude runs the imperative org loop after the reserved-server registration.
 CLAUDE_SETUP="$SETUP_DIR/setup-claude-interactive.sh"

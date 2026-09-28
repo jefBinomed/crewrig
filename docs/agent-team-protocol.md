@@ -31,24 +31,32 @@ rework is high.
 
 Claude Code runs a single implicit session team: the orchestrating session
 *is* the team, so there is no team-creation step. Within that implicit team,
-the following three primitives are **mandatory**:
+the following two primitives are confirmed present in the harness's tool
+surface and **mandatory**:
 
 1. **`Agent`** — delegate work to a specialist by spawning it with an
    explicit `subagent_type` matching the role (`architect`, `developer`,
    `tester`, `security`, `doc-writer`, `pr-reviewer`, `pr-logbook`, etc.).
    The spawn happens within the implicit session team — there is no
    `TeamCreate`.
-2. **`TaskCreate`** — assign **one task per agent role** for tracking. Each
-   task targets a specific specialist with a self-contained brief.
-3. **`SendMessage`** — coordinate progress, hand off intermediate
+2. **`SendMessage`** — coordinate progress, hand off intermediate
    artifacts, and unblock teammates. All cross-agent communication flows
    through this tool — never through plain text replies.
 
+**`TaskCreate`** — assign **one task per agent role** for tracking — is
+used when the harness exposes it, but is confirmed absent from the
+current Claude Code harness's tool surface (`docs/cli-matrix.md` →
+*Parity gaps*, issue #1267). That absence is neither a protocol
+violation an agent must work around nor a condition a REVIEW pass may
+cite for a `tech`-class finding; proceed with `Agent` and `SendMessage`
+alone when `TaskCreate` is unavailable.
+
 **Single-source brief rule**: The `Agent` spawn prompt is the
 authoritative brief — it must be self-contained because spawned agents
-inherit no conversation context. Use `TaskCreate` for tracking only:
-its `description` should be a one-liner (e.g. `"Implement feature X — full brief in Agent prompt"`), not a duplicate of the Agent prompt. Never write the same
-brief in both places.
+inherit no conversation context. When `TaskCreate` is available, use it
+for tracking only: its `description` should be a one-liner (e.g.
+`"Implement feature X — full brief in Agent prompt"`), not a duplicate of
+the Agent prompt. Never write the same brief in both places.
 
 **Verified-claim rule**: Technical assertions embedded in a developer
 brief (package names, install paths, command flags, file locations,
@@ -61,6 +69,22 @@ the approach, escalate to `architect` for a design pass before
 spawning the developer — that is the existing Template 1 step 1, not
 a new step.
 
+**User-intent fidelity rule**: When an `Agent` spawn brief restates a
+proposal the user has already made, the part of the brief stating what
+the user asked for SHALL quote the user's own wording verbatim — a
+direct quote, not a paraphrase. The spawned agent MAY be asked to
+identify risks or implementation concerns with that proposal, but the
+proposal itself SHALL NOT be presented as one option among alternatives
+the agent is free to invent or prefer in its place. Before adopting a
+sub-agent recommendation that changes, narrows, or reframes the user's
+original proposal, the orchestrator SHALL re-check that recommendation
+against the user's literal statement — recovered from the conversation
+itself, not from an intermediate summary — and SHALL surface any
+discrepancy to the user rather than silently adopting the reframed
+version. This rule applies to every `Agent` spawn whose brief restates
+a user proposal, regardless of the spawned role (`architect`,
+`developer`, or any other specialist).
+
 **Model compatibility rule**: When the orchestrating Claude Code session
 runs on a non-Anthropic backend (Ollama, Ollama Cloud, or any
 non-default model provider), every spawned `Agent` MUST use the same
@@ -70,6 +94,20 @@ omitting the `model` parameter to let the harness inherit from the
 parent session. A model mismatch causes spawned agents to fail silently
 — no output, no file edits, no error — which makes
 **the `Agent` spawn effectively non-functional.**
+
+Since spec 0200, a compiled Claude Code or Antigravity CLI agent output's
+`description` may carry guidance prose naming the Anthropic or Google
+model that agent's declared capability profile resolves to (spec 0197
+R14, spec 0198). **That guidance prose is a statement of the work's
+need, and it is subordinate to this rule wherever the two disagree.** On
+a non-default model provider, the rule's own resolution — matching the
+parent orchestrator's model, by explicit parameter or by inheritance —
+governs the spawn; the compiled prose is advisory and never overrides it.
+No mapping and no agent source changes on this account: spec 0197 R14
+forbids the guidance prose from introducing a frontmatter field, so it
+can never force a spawn's model by itself, and this statement exists so
+a session on a non-default provider is not directed into the silent-
+failure mode this rule exists to prevent.
 
 ## On CLIs with no multi-agent coordination surface (e.g. Gemini CLI)
 
@@ -100,7 +138,7 @@ applies to issue-anchored work, however small the fix looks.
 
 ## Worktree Isolation
 
-Parallel agent teams operating on the same git working directory collide on branch checkout and the staging index, corrupting each other's work. To prevent this, the orchestrating agent **MUST** create a dedicated git worktree **before** issuing any `TaskCreate` call or `Agent` spawn for the ticket:
+Parallel agent teams operating on the same git working directory collide on branch checkout and the staging index, corrupting each other's work. To prevent this, the orchestrating agent **MUST** create a dedicated git worktree **before** issuing the `Agent` spawn for the ticket — and before any `TaskCreate` call too, when the harness exposes it:
 
 ```sh
 git worktree add -b <branch-name> .worktrees/<ticket-id> crewrig/main
@@ -214,6 +252,8 @@ A `state == MERGED` result is positive confirmation the branch has merged. A bra
 **Session start — non-destructive surfacing.** Before opening a new ticket worktree, enumerate the existing worktrees (`git worktree list`), resolve each one's branch to its pull request with the command above, and **report** every worktree whose pull request is `MERGED` as a stale backlog item — so the agent is aware of the accumulated backlog before piling new work on top of it. This step is strictly report-only: it removes no worktree and deletes no branch, so a sibling session's in-flight worktree is never destroyed at another session's start.
 
 **Session end — confirmed-merge sweep.** When the session reaches its end, account for the worktrees under `.worktrees/` and, for every worktree whose pull request is positively confirmed `MERGED` by the command above, remove the worktree together with its local branch by following the ordered cleanup procedure documented earlier in this section (verify the merge landed → `git worktree remove` → `git branch -D` → close the logbook issue) — do not invent a new sequence. A worktree whose pull request is still open, whose branch carries unmerged or uncommitted work, or whose merge status cannot be positively confirmed SHALL be left in place and surfaced for later adjudication — never removed. This mirrors the *Stray-file discovery — no unilateral action* discipline above: a worktree's mere presence or apparent staleness never authorizes removal, and positive confirmation of a merged pull request is the sole precondition for removing any worktree.
+
+When an orchestrator pre-allocates a spec id for a sibling session at this kickoff moment, see `docs/spec-pr-workflow.md` → *Pre-allocating an id for a sibling session* for the obligation to actually secure it via `reserve-spec-id.sh --id <ID> --issue <N>` before asserting it "reserved."
 
 ## Built Components
 
@@ -413,8 +453,9 @@ retaining its dossier — see
 Six rules govern how teammates report back inside a team and how the team-lead interprets their signals.
 
 **Rule 1 — Report before idle.** Every agent operating inside a team
-(delegated via `Agent` and tracked via `TaskCreate`) MUST send a message to
-`team-lead` via `SendMessage` with a result summary before its turn ends.
+(delegated via `Agent`, and tracked via `TaskCreate` when the harness
+exposes it) MUST send a message to `team-lead` via `SendMessage` with a
+result summary before its turn ends.
 Going idle without sending a result message is a protocol violation. The
 result message must include: the task identifier, the outcome, and any
 artifact (file path, diff summary, verdict, etc.) the team lead needs to

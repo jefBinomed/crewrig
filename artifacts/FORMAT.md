@@ -21,7 +21,7 @@ and Claude Code.
 |------|----------------|-------------------|--------------------|
 | `skill` | `skills/<name>/SKILL.md` | `.gemini/skills/<name>/SKILL.md` | `.claude/skills/<name>/SKILL.md` |
 | `command` | `commands/<name>.md` | `.gemini/commands/<name>.toml` | `.claude/skills/<name>/SKILL.md` |
-| `agent` | `agents/<name>/AGENT.md` | `.gemini/agents/<name>.md` | `.claude/agents/<name>/AGENT.md` |
+| `agent` | `agents/<name>/AGENT.md` | `.gemini/agents/<name>.md` | `.claude/agents/<name>.md` |
 
 This table shows the two outputs common to every component kind; each kind
 also compiles to GitHub Copilot CLI (`.github/skills/…` or `.github/agents/…`)
@@ -111,8 +111,82 @@ The `claude:` section adds Claude Code-specific frontmatter fields:
 | `disable-model-invocation` | boolean | `false` | Prevent auto-invocation? |
 | `context` | string | *(none)* | Run context (`fork` for isolated subagent) |
 | `agent` | string | *(none)* | Agent type (`Explore`, `Plan`, etc.) |
-| `model` | string | *(none)* | Model override |
-| `effort` | string | *(none)* | Effort level override |
+
+**`model` and `effort` are native Claude Code per-agent frontmatter keys, not
+`claude:`-section fields an agent source authors.** A compiled Claude Code
+agent output's `model:` and `effort:` frontmatter, when present, is written
+by a model-mapping resolution (spec 0198) directing a source's capability
+profile onto that surface — never by a source declaring
+`claude.model` or `claude.effort` under its `claude:` section. A
+source-authored `claude.model` or `claude.effort` is read by no build step
+(spec 0200 requirement 26). The two keys stay recorded here, and not
+deleted, because `model-mappings/claude.yml` grounds both of its
+frontmatter items on a citation of this record.
+
+### `metadata.model:` (optional, agent sources only)
+
+An **agent** source (`type: agent`) MAY declare a CLI-agnostic **capability
+profile** under `metadata.model:`, sibling of `metadata.provenance:` (spec
+0195). It states what the agent's work needs from a model — never a
+concrete model, vendor, or CLI-namespaced key — and is optional: a source
+carrying no `metadata.model:` mapping, or one that declares no axis and no
+tuning knob, keeps exactly the behavior it has today (session-model
+inheritance). Skills and commands do not carry this field.
+
+`metadata.model:` is the **only** surface on which an agent source
+declares a model need — there is no other key, on any section, that
+states one. On the upstream-owned tiers (`artifacts/core/` and
+`artifacts/library/`), a source's `metadata:` block admits exactly two
+keys, `provenance` and `model`; `scripts/check-component-metadata-keys.sh`
+is the gate that rejects any other (spec 0200 requirement 8).
+
+| Key | Type | Domain | Unconstrained state |
+|---|---|---|---|
+| `intelligence` | string | `minimal`, `low`, `medium`, `high`, `xhigh`, `xxhigh`, `max` (ascending) | *(axis omitted — no model is selected)* |
+| `reasoning` | string | `none`, `low`, `medium`, `high`, `xhigh`, `max` (ascending) | *(axis omitted)* |
+| `specialization` | string | open enum of kebab-case tokens | `general` |
+| `context` | integer | a positive token count (a floor) | *(axis omitted)* |
+| `speed` | string | `standard`, `fast` | `standard` |
+| `modalities` | string[] | subset of `text`, `vision`, `image-out` | `[text]` (or an absent/empty list) |
+| `locality` | string | `any`, `local-only` | `any` |
+| `tuning` | mapping | the five keys below | *(mapping omitted or empty)* |
+
+`tuning:` admits exactly:
+
+| Key | Type | Domain |
+|---|---|---|
+| `temperature` | number | `0.0` to `2.0` inclusive |
+| `top-p` | number | greater than `0.0`, at most `1.0` |
+| `top-k` | integer | at least `1` |
+| `max-output-tokens` | integer | at least `1` |
+| `max-turns` | integer | at least `1` |
+
+A key outside these eight, or a `tuning:` key outside these five, is
+rejected at authoring time by `scripts/check-agent-profiles.sh` — a
+hermetic check over the source and these domains alone, consulting no
+mapping. A value outside a closed domain is rejected the same way; an
+unenumerated `specialization` value is not, because that axis is an open
+enum. The check never runs inside the build and its rejection never blocks
+a build: a profile it rejects is still resolved against, the keys it
+cannot read degrading rather than failing (spec 0198 R39).
+
+The per-CLI mapping that turns a declared profile into a target's native
+fields or prose lives in `model-mappings/<target>.yml`, normatively
+described in [`docs/model-mapping-format.md`](../docs/model-mapping-format.md);
+the resolution that reads a mapping and a profile together is
+`scripts/lib/model-resolve.sh`, consumed by `scripts/build-components.sh`.
+How an adopting organization changes what a mapping resolves to for its own
+fork is documented in
+[`docs/org-model-mapping-override.md`](../docs/org-model-mapping-override.md);
+what the migration of the core agents and of the compiled Claude Code layout
+asks of that organization is documented in
+[`docs/agent-profile-migration.md`](../docs/agent-profile-migration.md).
+
+**Obligation:** a later delta of spec 0195 that changes one of the domains
+above SHALL update this section and `scripts/check-agent-profiles.sh` in
+the same change — the same obligation
+[`docs/model-mapping-format.md`](../docs/model-mapping-format.md) → *Domains*
+already carries for the mapping side.
 
 ## Build Outputs
 
@@ -234,7 +308,7 @@ metadata:          # propagated when source declares metadata.provenance
 <body — becomes the agent's system prompt>
 ```
 
-Claude Code → `.claude/agents/<name>/AGENT.md`
+Claude Code → `.claude/agents/<name>.md`
 
 ```yaml
 ---
@@ -443,7 +517,7 @@ The build script (`scripts/build-components.sh`) requires:
    The contrast is worth stating, because both halves are load-bearing:
 
    - **Legal.** `architect` exists as both a skill and an agent. A skill lands
-     in `.claude/skills/architect`, an agent in `.claude/agents/architect` —
+     in `.claude/skills/architect`, an agent in `.claude/agents/architect.md` —
      different landing zones, so the pair builds. Eight other name pairs in
      this repository are legal for the same reason. A `core` component may
      likewise share a name with an overlay one: `core` lands in the committed

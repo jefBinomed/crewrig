@@ -306,13 +306,19 @@ grep -q "${tok}" "${launcher}" 2>/dev/null \
 # `register_mempalace_mcp` explains the hazard in prose that quotes the very
 # flag being banned.
 #
-# Scope: the two files this spec governs, swept through the same helper as the
-# fixture below — the executable witness that every shape the pattern claims to
-# catch is caught, that a pure comment is still excluded, and that the swept
-# paths were actually read. The one deliberate occurrence in the repository,
-# scripts/tests/test-setup-org-mcp.sh, asserts the org-MCP argv shape on
-# purpose and carries a comment saying so at its own call site (spec 0149 R4);
-# no other occurrence exists under scripts/.
+# Scope: the three files this spec governs, swept through the same helper as
+# the fixture below — the executable witness that every shape the pattern
+# claims to catch is caught, that a pure comment is still excluded, and that
+# the swept paths were actually read. hooks/mempalace-transcript.sh joined the
+# swept set alongside scripts/lib/common.sh and this file itself (issue #1247,
+# cold-review finding i1-F2): it carried this exact pattern via curl -H until
+# that ticket moved it to a `-K -` stdin config, and a static guard belongs
+# next to the dynamic argv-stub test (test-mempalace-transcript-hook.sh) that
+# already exercises the same regression on that file. The one deliberate
+# occurrence in the repository, scripts/tests/test-setup-org-mcp.sh, asserts
+# the org-MCP argv shape on purpose and carries a comment saying so at its own
+# call site (spec 0149 R4); no other occurrence exists under scripts/ or
+# hooks/.
 argv_scheme="Bea""rer"
 argv_hdr="Authoriz""ation"
 argv_hdr_lc="$(printf '%s' "${argv_hdr}" | tr '[:upper:]' '[:lower:]')"
@@ -402,7 +408,8 @@ esac
 
 argv_bearer_hits="$(_argv_bearer_hits \
   "${REPO_DIR}/scripts/lib/common.sh" \
-  "${REPO_DIR}/scripts/tests/test-mcp-daemon.sh")"
+  "${REPO_DIR}/scripts/tests/test-mcp-daemon.sh" \
+  "${REPO_DIR}/hooks/mempalace-transcript.sh")"
 # Asserted BEFORE the sweep verdict, and separately from it: a clean sweep and
 # a sweep that searched nothing are the same empty string, so the emptiness
 # below carries information only once the paths are known to have been read.
@@ -424,7 +431,7 @@ for unit in "${REPO_DIR}/config/launchd/com.mempalace.mcp-server.plist" \
   # plist, whose every body line is indented — an injected
   # <string>token=SECRET</string> passed as "commentary".
   body="$(sed -e 's/<!--.*-->//g' -e '/<!--/,/-->/d' -e 's/^[[:space:]]*#.*$//' "${unit}")"
-  if printf '%s' "${body}" | grep -qiE 'token[=[:space:]]*[A-Za-z0-9_-]{8,}|MEMPALACE_MCP_HTTP_TOKEN'; then
+  if grep -qiE 'token[=[:space:]]*[A-Za-z0-9_-]{8,}|MEMPALACE_MCP_HTTP_TOKEN' <<< "${body}"; then
     nope "$(basename "${unit}") carries a token outside commentary"
   else
     ok "$(basename "${unit}") carries no credential"
@@ -559,8 +566,9 @@ grep -q 'MCP_RESERVED_NAMES=(mempalace' "${REPO_DIR}/scripts/lib/common.sh" \
   || nope "mempalace is no longer reserved — re-check whether the setups still need to switch"
 
 # (b) order — each ensure_mempalace_http call must come AFTER its script's
-# stdio-shaped write (template `mv` for Gemini/Copilot, the final atomic
-# MCP_BASE write for Antigravity), so the HTTP entry overwrites the stdio one
+# stdio-shaped write (the gemini_settings_write in-place merge for Gemini,
+# spec 0214; the template `mv` for Copilot; the final atomic MCP_BASE write for
+# Antigravity), so the HTTP entry overwrites the stdio one
 # instead of the reverse. For Claude the anchor is the R19 stdio fallback
 # register, and the direction is inverted: `register_mempalace_mcp` and the
 # fallback must sit AFTER the call — a stdio register preceding the call would
@@ -574,9 +582,9 @@ for cli in claude gemini copilot antigravity; do
   call_line="$(grep -nF 'ensure_mempalace_http "$REPO_DIR"'" ${cli}" "$script" | head -1 | cut -d: -f1)"
   case "$cli" in
     claude)      anchor_pat='mcp_register_user mempalace' ; cmp='-lt' ;;
-    gemini)      anchor_pat='mv "${SETTINGS_TARGET}.tmp" "$SETTINGS_TARGET"' ; cmp='-gt' ;;
-    copilot)     anchor_pat='mv "${MCP_CONFIG_TARGET}.tmp" "$MCP_CONFIG_TARGET"' ; cmp='-gt' ;;
-    antigravity) anchor_pat='mv "${AGY_MCP_CONFIG}.tmp" "$AGY_MCP_CONFIG"' ; cmp='-gt' ;;
+    gemini)      anchor_pat='gemini_settings_write "$SETTINGS_TARGET"' ; cmp='-gt' ;;
+    copilot)     anchor_pat='write_json_config_secure_from "$MCP_CONFIG_TARGET" "$MCP_CONFIG_SRC"' ; cmp='-gt' ;;
+    antigravity) anchor_pat='write_json_config_secure_from "$AGY_MCP_CONFIG" - '"'"'.'"'"'' ; cmp='-gt' ;;
   esac
   # -F, not BRE: the anchors carry literal `{`, which BSD grep parses as the
   # start of an interval expression and fails on.
@@ -601,8 +609,8 @@ helper_body="$(awk '/^ensure_mempalace_http\(\) \{/{f=1;next} f&&/^\}/{exit} f' 
 # (c) predicate — the serving gate must be the positive authenticated accept
 # probe, NEVER /healthz, which answers 200 in every state (spec 0139
 # delta-01 / issue #880) and would be green for exactly the wrong reason.
-if printf '%s' "$helper_body" | grep -q '_mcp_daemon_probe_accepts' \
-   && ! printf '%s' "$helper_body" | grep -q '_health_mcp_daemon'; then
+if grep -q '_mcp_daemon_probe_accepts' <<< "$helper_body" \
+   && ! grep -q '_health_mcp_daemon' <<< "$helper_body"; then
   ok "ensure_mempalace_http gates serving on _mcp_daemon_probe_accepts, not /healthz"
 else
   nope "ensure_mempalace_http's serving gate is not the authenticated accept probe — /healthz returns 200 in every state"
@@ -614,7 +622,7 @@ fi
 # fallback would converge stdio against a daemon that would have answered).
 pre_probe="$(printf '%s\n' "$helper_body" | awk '/_mcp_daemon_probe_accepts/{exit} {print}')"
 tok_pre="$(printf '%s' "$pre_probe" | grep 'mcp_token_read_or_create' || true)"
-if [ -n "$tok_pre" ] && ! printf '%s' "$tok_pre" | grep -Eq '\|\| *(return|exit)'; then
+if [ -n "$tok_pre" ] && ! grep -Eq '\|\| *(return|exit)' <<< "$tok_pre"; then
   ok "the pre-probe token read carries no short-circuit (a token failure cannot abort before the probe)"
 else
   nope "the pre-probe mcp_token_read_or_create call short-circuits (a token failure aborts before any probe)"
@@ -693,14 +701,38 @@ chmod 600 "${TEST_HOME}/.claude.json"
 
 # Force a mid-transaction failure on the SECOND assistant switched. `present`
 # is ordered claude, gemini, copilot, antigravity, so gemini is switched second.
-# Making its config DIRECTORY unwritable passes the R12 floor (the file itself
-# stays readable and writable) but makes write_json_config_secure's mktemp fail
-# — the failure lands in the APPLY loop, after claude has already been switched,
-# so the rollback must restore claude. gemini's backup_file silently no-ops
-# (it writes into the same unwritable directory), which is harmless.
-chmod 555 "${TEST_HOME}/.gemini"
+#
+# A `chmod 555` on gemini's config directory used to simulate this (making the
+# file itself stay readable/writable — passing the R12 floor — while
+# write_json_config_secure's mktemp failed on the directory). A containerized
+# CI runner as root (UID 0) bypasses Unix permission checks entirely, so under
+# root the simulated failure silently vanished and this whole scenario turned
+# into a no-op pass (issue #1215). Stub `mktemp` on PATH instead —
+# `${TEST_HOME}/bin` is already ahead of the real PATH for the claude/gemini/
+# copilot/agy stand-ins above — to fail deterministically for the ONE call
+# this scenario needs to fail: write_json_config_secure's
+# `mktemp "${cfg}.tmp.XXXXXX"` against gemini's settings.json. Every other
+# call is matched by path and passed through, INCLUDING claude's own write
+# inside this same transaction, which stays untouched and still succeeds.
+# The one exception is gemini's own restore during the rollback below: it
+# targets that same blocked path and fails too, exactly as it did when the
+# whole directory was unwritable — this test asserts nothing about that
+# restore, so the shared fate is harmless. The stub fails identically whether
+# the test runs as an ordinary user or as root, because it never consults the
+# filesystem's permission bits.
+REAL_MKTEMP="$(command -v mktemp)"
+cat > "${TEST_HOME}/bin/mktemp" <<STUB
+#!/usr/bin/env bash
+for arg in "\$@"; do
+  case "\$arg" in
+    "${TEST_HOME}/.gemini/settings.json.tmp."*) exit 1 ;;
+  esac
+done
+exec "${REAL_MKTEMP}" "\$@"
+STUB
+chmod +x "${TEST_HOME}/bin/mktemp"
 out1="$(switch_assistants_to_http "test-token" 2>&1)"; rc1=$?
-chmod 755 "${TEST_HOME}/.gemini"
+rm -f "${TEST_HOME}/bin/mktemp"
 
 [ "${rc1}" -ne 0 ] \
   && ok "a switch that fails partway returns non-zero" \
@@ -1331,6 +1363,145 @@ else
     echo "       scripts/start-chroma-server.sh to exercise this half."
   fi
 fi
+
+# --- 17. The MemPalace home exists before a supervisor starts (#1196) --------
+# Both supervised units log to append:%h/.mempalace/<daemon>.log (systemd) or
+# StandardOutPath (launchd) and chdir into ~/.mempalace. Neither supervisor
+# creates a missing parent directory: on a fresh machine systemd fails the
+# unit with status=209/STDOUT and restarts it forever. Each case runs in a
+# subshell against its own fresh HOME so it cannot depend on state an earlier
+# section left under TEST_HOME.
+echo ""
+echo "ensure_mempalace_home — the daemon home exists before the supervisor starts (#1196):"
+
+h17="${TEST_HOME}/home-1196-fresh"
+mkdir -p "${h17}"
+out="$(HOME="${h17}"; unset MEMPALACE_PALACE_PATH; ensure_mempalace_home 2>&1)"; rc=$?
+[ "${rc}" -eq 0 ] && [ -d "${h17}/.mempalace" ] && [ -d "${h17}/.mempalace/palace" ] \
+  && ok "a fresh HOME gets ~/.mempalace and ~/.mempalace/palace" \
+  || nope "fresh HOME not bootstrapped (rc=${rc}): ${out}"
+
+out="$(HOME="${h17}"; unset MEMPALACE_PALACE_PATH; ensure_mempalace_home 2>&1)"; rc=$?
+[ "${rc}" -eq 0 ] \
+  && ok "a rerun on an existing home is an idempotent success" \
+  || nope "rerun failed (rc=${rc}): ${out}"
+
+h17="${TEST_HOME}/home-1196-override"
+mkdir -p "${h17}"
+out="$(HOME="${h17}"; MEMPALACE_PALACE_PATH="${TEST_HOME}/elsewhere-palace" ensure_mempalace_home 2>&1)"; rc=$?
+[ "${rc}" -eq 0 ] && [ -d "${h17}/.mempalace" ] && [ ! -e "${h17}/.mempalace/palace" ] \
+  && [ ! -e "${TEST_HOME}/elsewhere-palace" ] \
+  && ok "a MEMPALACE_PALACE_PATH override creates the home but no palace directory" \
+  || nope "override case wrong (rc=${rc}): ${out}"
+
+h17="${TEST_HOME}/home-1196-blocked"
+mkdir -p "${h17}"
+: > "${h17}/.mempalace"
+out="$(HOME="${h17}"; unset MEMPALACE_PALACE_PATH; ensure_mempalace_home 2>&1)"; rc=$?
+[ "${rc}" -ne 0 ] \
+  && ok "an uncreatable home fails with a non-zero status" \
+  || nope "an uncreatable home reported success: ${out}"
+case "${out}" in
+  *"ERROR:"*"${h17}/.mempalace"*) ok "the failure names the directory it could not create" ;;
+  *) nope "no ERROR line naming the directory: ${out}" ;;
+esac
+
+# Structural: both installers must bootstrap the home BEFORE handing off to
+# install_daemon_supervisor — a call placed after it would come too late, since
+# the supervisor loads and health-polls the unit inside that call.
+for fn17 in install_chroma_daemon install_mcp_daemon; do
+  order17="$(awk -v fn="${fn17}" '
+    $0 ~ "^" fn "\\(\\) \\{" { inside = 1; next }
+    inside && /^}$/ { exit }
+    inside && /^[[:space:]]*ensure_mempalace_home([[:space:]]|$)/ && !seen_sup { print "ensure" }
+    inside && /^[[:space:]]*install_daemon_supervisor([[:space:]]|$)/ { if (!seen_sup) print "supervisor"; seen_sup = 1 }
+  ' "${REPO_DIR}/scripts/lib/common.sh" | tr '\n' ' ')"
+  case "${order17}" in
+    "ensure supervisor "*) ok "${fn17} calls ensure_mempalace_home before install_daemon_supervisor" ;;
+    *) nope "${fn17} does not call ensure_mempalace_home before install_daemon_supervisor (saw: ${order17})" ;;
+  esac
+done
+
+
+# --- 18. Bearer token never reaches jq's argv (#1247) ------------------------
+# register_mempalace_mcp and restore_mempalace_registration used to pass the
+# token to jq via --arg/--argjson, which lands on jq's own argv — world-
+# readable via /proc/<pid>/cmdline on Linux. They now deliver it through
+# $ENV.<VAR> instead, reading a same-command env-var prefix assignment. Stub
+# jq to log every invocation's full argv (quoting-safe: a loop over "$@", not
+# "$*", so an embedded space in one argument cannot be mistaken for a second
+# one) and prove the token substring never appears there — then, with the
+# real jq restored, prove the configs were actually written (so the argv
+# guard cannot pass merely because a write silently failed).
+echo ""
+echo "Bearer token off jq's argv (#1247):"
+
+REAL_JQ="$(command -v jq)"
+JQ_ARGV_LOG="${TEST_HOME}/jq-argv.log"
+: > "${JQ_ARGV_LOG}"
+cat > "${TEST_HOME}/bin/jq" <<STUB
+#!/usr/bin/env bash
+{ for a in "\$@"; do printf '%s\x1f' "\$a"; done; printf '\n'; } >> "${JQ_ARGV_LOG}"
+exec "${REAL_JQ}" "\$@"
+STUB
+chmod +x "${TEST_HOME}/bin/jq"
+
+# ${TEST_HOME}/bin already holds the no-op claude/gemini/copilot/agy stubs
+# section 11 installed above; that section restored PATH to ORIG_PATH at its
+# end, so re-prepend the same bin dir rather than recreate them.
+export PATH="${TEST_HOME}/bin:${ORIG_PATH}"
+
+# Fresh, empty configs for all four assistants, at the exact paths
+# mcp_assistant_config_path resolves for this test's $HOME.
+mkdir -p "${TEST_HOME}/.gemini/config" "${TEST_HOME}/.copilot"
+echo '{"mcpServers":{}}' > "${TEST_HOME}/.claude.json"
+echo '{"mcpServers":{}}' > "${TEST_HOME}/.gemini/settings.json"
+echo '{"mcpServers":{}}' > "${TEST_HOME}/.copilot/mcp-config.json"
+echo '{"mcpServers":{}}' > "${TEST_HOME}/.gemini/config/mcp_config.json"
+chmod 600 "${TEST_HOME}/.claude.json" "${TEST_HOME}/.gemini/settings.json" \
+  "${TEST_HOME}/.copilot/mcp-config.json" "${TEST_HOME}/.gemini/config/mcp_config.json"
+
+TEST_TOKEN_18="test-token-argv-guard-1247"
+
+for cli18 in claude gemini copilot antigravity; do
+  register_mempalace_mcp "${cli18}" "${TEST_TOKEN_18}" >/dev/null 2>&1
+  rc18=$?
+  [ "${rc18}" -eq 0 ] \
+    && ok "register_mempalace_mcp ${cli18} succeeds under the jq-argv-logging stub" \
+    || nope "register_mempalace_mcp ${cli18} failed (rc=${rc18})"
+done
+
+# Sanity-check the capture actually embeds the token, so the restore below is
+# not exercising a vacuous (null) capture.
+cap18="$(capture_mempalace_registration gemini)"
+case "${cap18}" in
+  *"${TEST_TOKEN_18}"*) ok "the capture actually embeds the test token (restore below is non-vacuous)" ;;
+  *) nope "captured registration does not contain the test token: ${cap18}" ;;
+esac
+
+restore_mempalace_registration gemini "${cap18}" >/dev/null 2>&1
+rc18r=$?
+[ "${rc18r}" -eq 0 ] \
+  && ok "restore_mempalace_registration gemini succeeds under the jq-argv-logging stub" \
+  || nope "restore_mempalace_registration gemini failed (rc=${rc18r})"
+
+if grep -qF "${TEST_TOKEN_18}" "${JQ_ARGV_LOG}"; then
+  nope "the token substring appears in jq's logged argv — it leaked onto argv"
+else
+  ok "the token substring never appears in any jq invocation's argv"
+fi
+
+# Restore PATH to the real jq before reading the four configs back.
+export PATH="${ORIG_PATH}"
+rm -f "${TEST_HOME}/bin/jq"
+
+for cli18cfg in claude gemini copilot antigravity; do
+  cfg18="$(mcp_assistant_config_path "${cli18cfg}")"
+  auth18="$(jq -e -r '.mcpServers.mempalace.headers.Authorization' "${cfg18}" 2>/dev/null)"
+  [ "${auth18}" = "Bearer ${TEST_TOKEN_18}" ] \
+    && ok "${cli18cfg}'s config carries the correct Authorization header (the write did not silently fail)" \
+    || nope "${cli18cfg}'s config Authorization is wrong or missing: got [${auth18}]"
+done
 
 echo ""
 echo "----------------------------------------"

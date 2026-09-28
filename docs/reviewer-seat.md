@@ -256,6 +256,33 @@ dossier entry*. Left unvoided it is byte-indistinguishable from a consumed
 verdict, and a later pass would count it as one — inflating the `specs`
 pass ordinal and auditing findings this rule says must not be consumed.
 
+## Session Bootstrap for a seated pass
+
+Every session — including a seated pass — is otherwise bound by
+[`AGENTS.md`](../AGENTS.md) → *Session Bootstrap* to the six-step
+deterministic sweep defined in
+[`artifacts/core/rules/60-tools.md`](../artifacts/core/rules/60-tools.md)
+→ *Memory Activation Protocol → Session Start*. A **seated pass** is
+exempt from two of those six steps: step 3 (the cross-tool handoff
+lookup) and step 6 (the mandatory checkpoint write). It still runs steps
+1, 2, 4, and 5 unchanged.
+
+Both exempted steps read and write the project's `task-handoff` drawer,
+which carries the *authoring session's* own progress notes. Handing that
+content to a seated pass would breach exactly what *Instantiating a
+seated pass* above closes: the references-only brief and the cold-start
+independence guarantee, both of which forbid authoring-session context
+from reaching the pass by any channel. Step 6 fails on its own terms
+too — it exists to log a resumption, and a review pass never resumes
+anything; there is no prior work of its own for it to pick up.
+
+This exemption tracks **seat occupancy**, not role name. A pass is exempt
+only while it is instantiated as a seated pass per *Instantiating a
+seated pass* above, occupying the `specs`, `plan`, or `review` surface.
+An `architect` pass *authoring* a plan — not occupying that ticket's
+`plan` surface as its reviewer — is not exempt, nor is any other
+non-seated role; each stays fully bound to all six steps.
+
 ## Prior-finding disposition
 
 Before a seat's pass N+1 (for N ≥ 1), the disposition of every finding in
@@ -264,11 +291,16 @@ identifier — as exactly one of:
 
 - `addressed`, naming the commit or revision that addressed it;
 - `superseded`;
-- `withdrawn`, with a stated reason.
+- `withdrawn`, with a stated reason;
+- `ledger`, naming the ledger entry — the disposition a non-blocking
+  finding routed to the deferred-findings ledger carries, per
+  [`docs/retroactive-loop.md`](retroactive-loop.md) → *Journalling*.
 
 The orchestrator makes that record on the artifact under review or in the
 logbook journal entry for the iteration, and the instantiation brief names
-its location.
+its location. A `ledger`-disposed finding's record is the journal line
+[`docs/retroactive-loop.md`](retroactive-loop.md) → *Journalling* already
+mandates; no second record is required for it.
 
 **On the `plan` surface there is nothing new to write.** The revised
 plan's existing finding traceability table
@@ -299,6 +331,27 @@ pull requests are enumerable by a third party because
 to record each stage artifact, and because the instantiation brief names
 the locations of the prior verdicts — a seat never performs a forge-wide
 search to find its own record.
+
+**The `review` seat's `<M>` counts findings, not pull requests, within a
+fixed `<N>`.** `<N>` tracks the `iter:N` label ordinal exactly as the table
+above states, and only that label's advance moves it. A ticket can still
+present a seat with more than one implementation pull request under the
+same `iter:N` — a replacement pull request opened without a new DEV-loop
+iteration, for example after a branch had to be recreated — and on that
+second pull request `<M>` continues from the seat's last-minted value for
+that `<N>` rather than resetting to 1. A seat that minted `i1-F1`..`i1-F5`
+on the first pull request continues at `i1-F6` on the second; it never
+re-mints `i1-F1`. This is the same uniqueness the identifier format above
+already promises ("unique and stable for the life of the seat"), stated
+explicitly for the case a single pull request cannot make visible on its
+own: the seat's dossier (*Seat dossier*, reconstructed per *Reconstructing
+a dossier*) spans every pull request the seat has reviewed, so a pass
+opening on the second pull request enumerates the first pull request's
+identifiers before minting its own. When that enumeration cannot be
+completed — the first pull request's verdicts are unreachable — the pass
+does not guess a continuation value for `<M>`: the existing *Vacant seat*
+rule governs, unchanged, and the pass declares the seat vacant rather than
+silently restarting at `<N>-F1` or fabricating one.
 
 ## Prior-finding audit
 
@@ -447,3 +500,4 @@ justifies it.
 - Plan review protocol — [`docs/plan-review-protocol.md`](plan-review-protocol.md) and plan format — [`docs/plan-format.md`](plan-format.md).
 - Agent Team Protocol — [`docs/agent-team-protocol.md`](agent-team-protocol.md).
 - Reviewer sources — [`artifacts/core/agents/pr-reviewer/AGENT.md`](../artifacts/core/agents/pr-reviewer/AGENT.md), [`artifacts/core/skills/pr-reviewer/SKILL.md`](../artifacts/core/skills/pr-reviewer/SKILL.md), [`artifacts/core/skills/architect/SKILL.md`](../artifacts/core/skills/architect/SKILL.md), [`artifacts/core/skills/spec-author/SKILL.md`](../artifacts/core/skills/spec-author/SKILL.md).
+- Session Bootstrap — [`AGENTS.md`](../AGENTS.md) → *Session Bootstrap*.

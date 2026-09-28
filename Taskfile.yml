@@ -60,6 +60,46 @@ tasks:
     desc: "End the shared MemPalace MCP HTTP daemon and remove its supervisor unit. Run this BEFORE reverting the ticket that introduced it — the launcher lives outside the repository, so a revert alone would leave a unit that keeps autostarting."
     cmd: bash {{.REPO_DIR}}/scripts/uninstall-mcp-daemon.sh
 
+  usage:query:
+    desc: "Read usage records by session, agent+parent, period, task-handoff key, or external asset reference (spec 0207/0208). JSONL output. Usage: task usage:query -- --session <id> | --period <YYYY-MM> [--cli <cli>] | --task-key <key> [--rollup [--combined]] | ..."
+    cmd: bash {{.REPO_DIR}}/scripts/usage-query.sh {{.CLI_ARGS}}
+
+  usage:price:
+    desc: "Compute comparative reference prices for usage records against a pinned LiteLLM snapshot (spec 0209). Never an invoice. Usage: task usage:price -- --period <YYYY-MM> [--cli <cli>] [--currency <ISO4217>] [--as-of-today] [--rollup] | --refresh-pricelist [--sha <sha>] | --refresh-fx [--fx-mirror frankfurter] | --cross-check <modelId>"
+    cmd: bash {{.REPO_DIR}}/scripts/usage-price.sh {{.CLI_ARGS}}
+
+  usage:task:
+    desc: "Write, read, or clear the current session's usage-attribution declaration record (spec 0208). Usage: task usage:task -- set --channel explicit|protocol [--task-key <key>] [--asset <kind>:<ref>] | show | clear"
+    cmd: bash {{.REPO_DIR}}/scripts/usage-task.sh {{.CLI_ARGS}}
+
+  usage:attribute:
+    desc: "Append to, list, or inspect the append-only attribution ledger (spec 0208). Usage: task usage:attribute -- add (--session <id> | --agent <id> --parent <id> | --period <YYYY-MM>) (--task-key <key> | --asset <kind>:<ref>) --reason <text> | list | explain --record <id> --cli <cli> --period <YYYY-MM>"
+    cmd: bash {{.REPO_DIR}}/scripts/usage-attribute.sh {{.CLI_ARGS}}
+
+  usage:prune:
+    desc: "Remove a period's usage-record journal entries and mirrored drawers together (spec 0207). Never automatic. Usage: task usage:prune -- <cli> <YYYY-MM> [--force | --unprune]"
+    cmd: bash {{.REPO_DIR}}/scripts/usage-prune.sh {{.CLI_ARGS}}
+
+  usage:mirror:
+    desc: "Run the MemPalace catch-up for pending usage-record mirror markers (spec 0207). Usage: task usage:mirror -- [--reconcile]"
+    cmd: bash {{.REPO_DIR}}/scripts/usage-mirror.sh {{.CLI_ARGS}}
+
+  usage:drain:
+    desc: "One-shot, unbounded drain of the usage-capture spool into the usage-record journal (spec 0207 R-L). Pays the first-drain cost once, at a time the operator chooses."
+    cmd: bash {{.REPO_DIR}}/scripts/usage-drain.sh
+
+  usage:dashboard:
+    desc: "Generate the usage dashboard as one self-contained, offline HTML file (spec 0210 form A) at <root>/dashboard/usage-dashboard.html. Reference figures, never an invoice. Usage: task usage:dashboard -- [--session <id> | --agent <id> --parent <id> | --task-key <key> | --asset <kind>:<ref> | --cli <cli>] [--from <YYYY-MM-DD>] [--to <YYYY-MM-DD>] [--period <YYYY-MM>] [--model <id>] [--bucket day|week|month] [--currency <ISO4217>] [--as-of-today] [--out <path>]"
+    cmd: bash {{.REPO_DIR}}/scripts/usage-dashboard.sh page {{.CLI_ARGS}}
+
+  usage:dashboard:serve:
+    desc: "Serve the live usage dashboard on 127.0.0.1 only, in the foreground (spec 0210 form B); stop it with Ctrl-C or its Stop action. Writes nothing. Usage: task usage:dashboard:serve -- [--port <n>] (default 41920; filters are request parameters, e.g. /?period=2026-09)"
+    cmd: bash {{.REPO_DIR}}/scripts/usage-dashboard.sh serve {{.CLI_ARGS}}
+
+  usage:dashboard:report:
+    desc: "Print the usage dashboard as a plain-text report, or its view model as JSON (spec 0210 form C). Usage: task usage:dashboard:report -- [same filters as usage:dashboard] [--as-of-today] [--json]"
+    cmd: bash {{.REPO_DIR}}/scripts/usage-dashboard.sh report {{.CLI_ARGS}}
+
   setup:playwright-mcp:
     desc: "Install the Playwright MCP server globally (opt-in). Registers @playwright/mcp in Claude Code and Gemini CLI user-scope config. Idempotent — safe to re-run."
     cmds:
@@ -292,6 +332,10 @@ tasks:
         msg: "fzf is required. Install with: brew install fzf (macOS) or apt-get install fzf (Linux)"
     cmd: bash {{.REPO_DIR}}/scripts/import-copilot-history.sh
 
+  usage:backfill:
+    desc: "Replay usage-record capture for Claude Code, Gemini CLI and Copilot CLI against history already on this machine (idempotent; pass --reset-cursors to re-derive from scratch, spec 0206)"
+    cmd: bash {{.REPO_DIR}}/scripts/usage-backfill.sh {{.CLI_ARGS}}
+
   build-components-copilot:
     desc: Build community components for GitHub Copilot CLI only
     preconditions:
@@ -342,16 +386,87 @@ tasks:
 
   # --- Linting ---
 
+  lint-bootstrap:
+    desc: "Install every dependency the spec, Markdown and TypeScript linters need (js-yaml, semver, markdownlint-cli, typescript, oxlint, oxfmt), and report on shellcheck (spec 0225 requirement 1)"
+    cmds:
+      - |
+        set -euo pipefail
+        echo "Installing npm dependencies (js-yaml, semver, markdownlint-cli, typescript, oxlint, oxfmt)..."
+        if [ -f {{.REPO_DIR}}/package-lock.json ]; then
+          npm ci
+        else
+          npm install
+        fi
+        echo ""
+        if command -v shellcheck >/dev/null 2>&1; then
+          echo "shellcheck: found ($(shellcheck --version | grep -i version | head -1))"
+        else
+          echo "shellcheck: not found on PATH."
+          echo "  shellcheck is a system package outside npm's reach — install it with:"
+          echo "    brew install shellcheck        (macOS)"
+          echo "    apt-get install shellcheck     (Debian/Ubuntu)"
+          echo "    https://github.com/koalaman/shellcheck#installing"
+        fi
+
   lint-markdown:
     desc: Check all Markdown files for lint compliance
     preconditions:
-      - sh: command -v markdownlint >/dev/null 2>&1
-        msg: "markdownlint-cli is required. Install with: npm install -g markdownlint-cli"
+      - sh: command -v markdownlint >/dev/null 2>&1 || npx --no-install markdownlint --version >/dev/null 2>&1
+        msg: "markdownlint-cli is required. Run: task lint-bootstrap (or: npm install -g markdownlint-cli)"
     # extensions/**/commands/*.md are pivot command sources (the body IS the
     # prompt, not prose) — exclude them from prose linting (spec 0042).
     # artifacts/*/commands/*.md are the same kind of pivot command source at
     # the artifacts tier (spec 0191) — same rationale, same exclusion.
-    cmd: markdownlint "**/*.md" --ignore node_modules --ignore extension-skeleton --ignore 'extensions/**/commands/*.md' --ignore 'artifacts/*/commands/*.md'
+    cmd: markdownlint "**/*.md" --ignore node_modules --ignore '**/node_modules/**' --ignore extension-skeleton --ignore 'extensions/**/commands/*.md' --ignore 'artifacts/*/commands/*.md'
+
+  # Spec 0238 R15: local entry points running exactly the CI commands of the
+  # `ratchet` and `lint-typescript` jobs (ci/ci-capabilities.yml). The ratchet
+  # is standard-library only, so it needs no `npm ci`.
+  ratchet:
+    desc: "Run the shell / JavaScript / Python footprint ratchet, as CI does (spec 0238 R1-R3)"
+    cmd: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-ratchet.ts
+
+  lint-ts:
+    desc: "Run every TypeScript check CI runs: type-check, erasable syntax, Oxlint, Oxfmt (spec 0238 R4-R8)"
+    preconditions:
+      - sh: test -x node_modules/.bin/tsc && test -x node_modules/.bin/oxlint && test -x node_modules/.bin/oxfmt
+        msg: "The TypeScript toolchain (typescript, oxlint, oxfmt) is required. Run: task lint-bootstrap"
+    cmd: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-typescript.ts
+
+  typecheck-ts:
+    desc: "Type-check every tracked TypeScript source in strict mode (spec 0238 R4)"
+    preconditions:
+      - sh: test -x node_modules/.bin/tsc && test -x node_modules/.bin/oxlint && test -x node_modules/.bin/oxfmt
+        msg: "The TypeScript toolchain (typescript, oxlint, oxfmt) is required. Run: task lint-bootstrap"
+    cmd: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-typescript.ts --step typecheck
+
+  erasable-ts:
+    desc: "Reject TypeScript syntax Node type stripping cannot erase (spec 0238 R5)"
+    preconditions:
+      - sh: test -x node_modules/.bin/tsc && test -x node_modules/.bin/oxlint && test -x node_modules/.bin/oxfmt
+        msg: "The TypeScript toolchain (typescript, oxlint, oxfmt) is required. Run: task lint-bootstrap"
+    cmd: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-typescript.ts --step erasable
+
+  oxlint-ts:
+    desc: "Run Oxlint type-aware strict typing and the max-lines warning (spec 0238 R6-R7)"
+    preconditions:
+      - sh: test -x node_modules/.bin/tsc && test -x node_modules/.bin/oxlint && test -x node_modules/.bin/oxfmt
+        msg: "The TypeScript toolchain (typescript, oxlint, oxfmt) is required. Run: task lint-bootstrap"
+    cmd: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-typescript.ts --step lint
+
+  format-ts:
+    desc: "Check TypeScript formatting with Oxfmt (spec 0238 R8)"
+    preconditions:
+      - sh: test -x node_modules/.bin/tsc && test -x node_modules/.bin/oxlint && test -x node_modules/.bin/oxfmt
+        msg: "The TypeScript toolchain (typescript, oxlint, oxfmt) is required. Run: task lint-bootstrap"
+    cmd: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-typescript.ts --step format
+
+  format-ts:fix:
+    desc: "Rewrite every tracked TypeScript source with Oxfmt (local convenience, not a CI mirror)"
+    preconditions:
+      - sh: test -x node_modules/.bin/tsc && test -x node_modules/.bin/oxlint && test -x node_modules/.bin/oxfmt
+        msg: "The TypeScript toolchain (typescript, oxlint, oxfmt) is required. Run: task lint-bootstrap"
+    cmd: git ls-files -z '*.ts' ':!:.claude/**' ':!:.gemini/**' ':!:.github/**' ':!:.agents/**' | xargs -0 node_modules/.bin/oxfmt --write
 
   spec:lint:
     desc: "Lint spec files for format compliance (markdown + custom semantic rules)"
@@ -360,12 +475,12 @@ tasks:
   fix-markdown:
     desc: Auto-fix Markdown formatting issues
     preconditions:
-      - sh: command -v markdownlint >/dev/null 2>&1
-        msg: "markdownlint-cli is required. Install with: npm install -g markdownlint-cli"
+      - sh: command -v markdownlint >/dev/null 2>&1 || npx --no-install markdownlint --version >/dev/null 2>&1
+        msg: "markdownlint-cli is required. Run: task lint-bootstrap (or: npm install -g markdownlint-cli)"
     # Mirror the lint-markdown exclusion: extension command pivots are prompt
     # sources, not prose (spec 0042). artifacts/*/commands/*.md are the same
     # kind of pivot command source at the artifacts tier (spec 0191).
-    cmd: markdownlint "**/*.md" --ignore node_modules --ignore extension-skeleton --ignore 'extensions/**/commands/*.md' --ignore 'artifacts/*/commands/*.md' --fix
+    cmd: markdownlint "**/*.md" --ignore node_modules --ignore '**/node_modules/**' --ignore extension-skeleton --ignore 'extensions/**/commands/*.md' --ignore 'artifacts/*/commands/*.md' --fix
 
   # --- Transcript Management ---
 
@@ -406,6 +521,35 @@ tasks:
   check-bash32-portability:
     desc: "Reject Bash 4+ constructs in scripts/ and hooks/ (local mirror of the CI guard, spec 0111)"
     cmd: bash {{.REPO_DIR}}/scripts/check-bash32-portability.sh
+
+  check-pipefail-grep:
+    desc: "Reject writer piped into grep -q under pipefail in scripts/ and hooks/ (local mirror of the CI guard, docs/scripting-conventions.md Rule 6)"
+    cmd: bash {{.REPO_DIR}}/scripts/check-pipefail-grep.sh
+
+  check-model-mappings:
+    desc: "Check model-mapping conformance against docs/model-mapping-format.md (local mirror of the CI guard, spec 0197)"
+    preconditions:
+      - sh: command -v yq >/dev/null 2>&1
+        msg: "yq is required. Install with: brew install yq"
+    cmd: bash {{.REPO_DIR}}/scripts/check-model-mappings.sh
+
+  check-agent-profiles:
+    desc: "Check agent capability-profile conformance against spec 0195 (local mirror of the CI guard, spec 0198)"
+    preconditions:
+      - sh: command -v yq >/dev/null 2>&1
+        msg: "yq is required. Install with: brew install yq"
+    cmd: bash {{.REPO_DIR}}/scripts/check-agent-profiles.sh
+
+  check-metadata-keys:
+    desc: "Check the metadata: closed key set on artifacts/core/** and artifacts/library/** (local mirror of the CI guard, spec 0200)"
+    preconditions:
+      - sh: command -v yq >/dev/null 2>&1
+        msg: "yq is required. Install with: brew install yq"
+    cmd: bash {{.REPO_DIR}}/scripts/check-component-metadata-keys.sh
+
+  check-claude-agent-layout:
+    desc: "Check the compiled .claude/agents/ tree holds only flat <name>.md files (local mirror of the CI guard, spec 0201)"
+    cmd: bash {{.REPO_DIR}}/scripts/check-claude-agent-layout.sh
 
   skill:check:
     desc: "Verify built skill (+ optional agent) mirrors for one component across .claude/, .gemini/, .github/. Usage: task skill:check NAME=<skill-name>"
@@ -463,7 +607,7 @@ tasks:
         done
 
         # --- Agent mirrors (optional, but must be symmetric when present) ---
-        CLAUDE_AGENT=".claude/agents/${NAME}/AGENT.md"
+        CLAUDE_AGENT=".claude/agents/${NAME}.md"
         GEMINI_AGENT=".gemini/agents/${NAME}.md"
         COPILOT_AGENT=".github/agents/${NAME}.md"
         present=0

@@ -14,6 +14,8 @@ set -e
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 # shellcheck source=scripts/lib/tls-delegation.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/tls-delegation.sh"
+# shellcheck source=scripts/lib/usage-capture-optin.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/usage-capture-optin.sh"
 
 COPILOT_HOME="${HOME}/.copilot"
 COPILOT_INSTRUCTIONS="${COPILOT_HOME}/instructions"
@@ -262,16 +264,15 @@ if [ -n "$MEMPALACE_PYTHON_BIN" ]; then
   # Copy template, patch mcpServers.mempalace.command with the detected
   # python, and substitute __CREWRIG_REPO_DIR__ in args so the
   # http-wrapper resolves to an absolute path (mirrors Gemini setup).
-  jq --arg tlsexec "$REPO_DIR/scripts/lib/tls-exec.sh" --arg py "$MEMPALACE_PYTHON_BIN" --arg repo "$REPO_DIR" \
+  write_json_config_secure_from "$MCP_CONFIG_TARGET" "$MCP_CONFIG_SRC" \
+    --arg tlsexec "$REPO_DIR/scripts/lib/tls-exec.sh" --arg py "$MEMPALACE_PYTHON_BIN" --arg repo "$REPO_DIR" \
     '.mcpServers.mempalace.command = "bash"
      | .mcpServers.mempalace.args = ([$tlsexec, $py]
-         + (.mcpServers.mempalace.args | map(gsub("__CREWRIG_REPO_DIR__"; $repo))))' \
-    "$MCP_CONFIG_SRC" > "${MCP_CONFIG_TARGET}.tmp" && mv "${MCP_CONFIG_TARGET}.tmp" "$MCP_CONFIG_TARGET"
+         + (.mcpServers.mempalace.args | map(gsub("__CREWRIG_REPO_DIR__"; $repo))))'
   echo "  Installed: mcp-config.json (mempalace patched with detected Python + wrapper path)"
   MEMPALACE_INSTALLED=1
 else
-  jq 'del(.mcpServers.mempalace)' \
-    "$MCP_CONFIG_SRC" > "${MCP_CONFIG_TARGET}.tmp" && mv "${MCP_CONFIG_TARGET}.tmp" "$MCP_CONFIG_TARGET"
+  write_json_config_secure_from "$MCP_CONFIG_TARGET" "$MCP_CONFIG_SRC" 'del(.mcpServers.mempalace)'
   echo "  Installed: mcp-config.json (mempalace omitted from mcpServers)"
   MEMPALACE_INSTALLED=0
 fi
@@ -279,13 +280,12 @@ fi
 # Route the sequentialthinking MCP server through tls-exec.sh so its npx package
 # fetch inherits custom-CA trust when consented (spec 0084 R2/R9). Runs in both
 # the mempalace-in and mempalace-out branches.
-jq --arg tlsexec "$REPO_DIR/scripts/lib/tls-exec.sh" '
+write_json_config_secure "$MCP_CONFIG_TARGET" --arg tlsexec "$REPO_DIR/scripts/lib/tls-exec.sh" '
   if .mcpServers.sequentialthinking then
     .mcpServers.sequentialthinking.args = ([$tlsexec, .mcpServers.sequentialthinking.command]
       + .mcpServers.sequentialthinking.args)
     | .mcpServers.sequentialthinking.command = "bash"
-  else . end' \
-  "$MCP_CONFIG_TARGET" > "${MCP_CONFIG_TARGET}.tmp" && mv "${MCP_CONFIG_TARGET}.tmp" "$MCP_CONFIG_TARGET"
+  else . end'
 
 # Fold the operator's pre-existing non-reserved MCP servers back over the
 # framework config (spec 0089). Framework reserved entries (mempalace /
@@ -309,8 +309,8 @@ fi
 # with a loud lockout warning (R20 — no stdio convergence against a
 # probe-verified serving daemon).
 if [ "${MEMPALACE_INSTALLED:-0}" -eq 1 ]; then
-  ensure_mempalace_http "$REPO_DIR" copilot
-  _mempalace_rc=$?
+  _mempalace_rc=0
+  ensure_mempalace_http "$REPO_DIR" copilot || _mempalace_rc=$?
   case "$_mempalace_rc" in
     0)
       echo "  MemPalace reaches shared memory through the HTTP daemon."
@@ -382,19 +382,24 @@ for overlay_tier in community org; do
 done
 
 # --- Transcript hooks (opt-in) ---
-ENABLE_TRANSCRIPTS=$(echo -e "no\nyes" | fzf --height 10% --header "Enable automatic session recording to MemPalace? (opt-in)")
+# The user-level hooks file is shared by session recording and usage capture,
+# so it is resolved outside both opt-ins.
+COPILOT_HOOKS_DIR="$COPILOT_HOME/hooks"
+USER_HOOKS_JSON="$COPILOT_HOOKS_DIR/copilot-transcript-hooks.json"
+# `|| true`: under `set -e`, Esc makes fzf exit 130 and would abort setup before
+# the usage-capture question below; a canceled answer reads as a decline.
+ENABLE_TRANSCRIPTS=$(echo -e "no\nyes" | fzf --height 10% --header "Enable automatic session recording to MemPalace? (opt-in)" || true)
 if [ "$ENABLE_TRANSCRIPTS" = "yes" ]; then
   HOOKS_SRC="$REPO_DIR/hooks/copilot-transcript-hooks.json"
   HOOK_SCRIPT_SRC="$REPO_DIR/hooks/mempalace-transcript.sh"
-  COPILOT_HOOKS_DIR="$COPILOT_HOME/hooks"
   HOOK_SCRIPT_TARGET="$COPILOT_HOOKS_DIR/mempalace-transcript.sh"
   echo ""
-  USER_HOOKS_JSON="$COPILOT_HOOKS_DIR/copilot-transcript-hooks.json"
   echo "Activating transcript hooks will:"
   echo "  1. Install the hook script to $HOOK_SCRIPT_TARGET (project-independent)"
-  echo "  2. Deploy user-level hooks to $USER_HOOKS_JSON (fires for ALL projects)"
+  echo "  2. Deploy user-level hooks to $USER_HOOKS_JSON (fires for ALL projects),"
+  echo "     backing it up first when it exists"
   echo ""
-  CONFIRM=$(echo -e "yes\nno" | fzf --height 10% --header "Apply?")
+  CONFIRM=$(echo -e "yes\nno" | fzf --height 10% --header "Apply?" || true)
   if [ "$CONFIRM" = "yes" ]; then
     mkdir -p "$COPILOT_HOOKS_DIR"
     install_file "$HOOK_SCRIPT_SRC" "$HOOK_SCRIPT_TARGET" \
@@ -409,9 +414,11 @@ if [ "$ENABLE_TRANSCRIPTS" = "yes" ]; then
     GUARD_ABS="$(cd "$(dirname "$GUARD_SCRIPT_SRC")" && pwd -P)/$(basename "$GUARD_SCRIPT_SRC")"
     HOOKS_PATCHED_TMP="$(mktemp)"
     # The Copilot CLI hooks schema keys `hooks` by camelCase event name
-    # (object of event -> array). Rewrite `preToolUse` command to the in-repo
-    # guard path (without env prefix), and lifecycle event commands to the
-    # installed hook path with env prefix.
+    # (object of event -> array). Unlike the Claude/Gemini `gsub`
+    # substitutions above, this branch REBUILDS each command deterministically
+    # per entry: `preToolUse` is the worktree git guard, every other entry the
+    # transcript hook. Usage capture is not part of this manifest: it has its
+    # own opt-in below (spec 0211).
     jq --arg envp "$ENV_PREFIX" --arg hook_path "$HOOK_SCRIPT_TARGET" --arg guard_path "$GUARD_ABS" '
       (.hooks // {}) |= with_entries(
         if .key == "preToolUse"
@@ -426,15 +433,43 @@ if [ "$ENABLE_TRANSCRIPTS" = "yes" ]; then
       exit 1
     fi
     # User-level hooks: loaded by Copilot for every project (not just crewrig).
-    cp "$HOOKS_PATCHED_TMP" "$USER_HOOKS_JSON"
-    echo "  User-level transcript hooks deployed to $USER_HOOKS_JSON"
-    echo "  Worktree git guard wired to $GUARD_ABS (in-repo absolute path)"
+    # Full replace as before, but backup-first, 0600, and carrying any
+    # registered capture command through unchanged (spec 0211 R8).
+    if ! merge_session_recording_hooks copilot "$USER_HOOKS_JSON" "$HOOKS_PATCHED_TMP"; then
+      echo "  Transcript activation FAILED — setup continues without it." >&2
+    else
+      echo "  User-level transcript hooks deployed to $USER_HOOKS_JSON"
+      echo "  Worktree git guard wired to $GUARD_ABS (in-repo absolute path)"
+      warn_if_linked_worktree "$REPO_DIR" "worktree git guard"
+    fi
     rm -f "$HOOKS_PATCHED_TMP"
   else
     echo "  Transcript activation canceled."
   fi
 else
   echo "  Session recording disabled (re-run this script to enable)."
+fi
+
+# --- Usage capture (opt-in, spec 0211) ---
+# Its own question, asked whatever the session-recording answer was (R1) and
+# never gated on MemPalace (R3): capture writes to the file-system journal.
+# Every read and write of a capture entry lives in scripts/lib/usage-capture-optin.sh.
+echo ""
+uc_rc=0
+UC_STATE="$(usage_capture_state copilot "$USER_HOOKS_JSON")" || uc_rc=$?
+if [ "$uc_rc" -ne 0 ]; then
+  echo "  WARNING: cannot read $USER_HOOKS_JSON as JSON; usage-capture step skipped." >&2
+else
+  if [ "$UC_STATE" = "absent" ]; then
+    usage_capture_disclose copilot "$USER_HOOKS_JSON" "$REPO_DIR" || true
+    UC_ANSWER=$(printf 'no\nyes\n' | fzf --height 10% --header "Capture token usage for Copilot CLI? (opt-in, MemPalace not required)" || true)
+  else
+    UC_PATHS="$(usage_capture_paths copilot "$USER_HOOKS_JSON")" || UC_PATHS=""
+    echo "Usage capture is registered in $USER_HOOKS_JSON, at:"
+    printf '%s\n' "$UC_PATHS" | sed 's/^/  /'
+    UC_ANSWER=$(printf 'keep\nremove\n' | fzf --height 10% --header "Usage capture is registered for Copilot CLI. Keep it or remove it?" || true)
+  fi
+  usage_capture_apply copilot "$USER_HOOKS_JSON" "$REPO_DIR" "$UC_STATE" "$UC_ANSWER" || echo "  Usage-capture step FAILED — setup continues." >&2
 fi
 
 echo ""

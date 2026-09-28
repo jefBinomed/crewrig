@@ -23,6 +23,10 @@
 #        `"hooks": {}` and `version: 1`.
 #   R3 — the user-level patch transform rewrites the command of EVERY entry in
 #        EVERY event array to an absolute hook path prefixed by the env vars.
+#   spec 0211 R2 — the session-recording manifest registers no usage-capture.sh
+#        command: usage capture has its own opt-in, covered (with the
+#        never-copied invariant for usage-capture.sh) by
+#        scripts/tests/test-setup-usage-capture-optin.sh.
 #
 # HERMETIC: no HOME writes, no network, no interactive script runs. All
 # transforms target throwaway paths under a temp root removed on exit.
@@ -112,13 +116,16 @@ for sf in "$SETTINGS_TEMPLATE" "$SETTINGS_COMMITTED"; do
 done
 
 # ---------------------------------------------------------------------------
-# §3. Replay the user-level patch transform (R3).
+# §3. Replay the user-level patch transform (R3): the per-array dispatch
+# scripts/setup-copilot-interactive.sh applies — preToolUse to the in-repo
+# guard, every other entry to the installed transcript hook.
 # ---------------------------------------------------------------------------
 echo "§3 user-level patch transform (R3)"
 ENVP="MEMPALACE_TRANSCRIPT_ENABLED=1 MEMPALACE_PYTHON=/usr/bin/python3"
 HOOK_TARGET="$TMP_ROOT/copilot/hooks/mempalace-transcript.sh"
 GUARD_TARGET="$REPO_DIR/hooks/worktree-git-guard.sh"
 PATCHED="$TMP_ROOT/patched.json"
+
 jq --arg envp "$ENVP" --arg hook_path "$HOOK_TARGET" --arg guard_path "$GUARD_TARGET" '
   (.hooks // {}) |= with_entries(
     if .key == "preToolUse"
@@ -141,7 +148,7 @@ else
   bad "preToolUse command not correctly rewritten to guard (got: $guard_cmd)"
 fi
 
-# Lifecycle events must point to the transcript hook with env prefix
+# Lifecycle events must point to the transcript hook with env prefix.
 for ev in sessionStart userPromptSubmitted postToolUse agentStop sessionEnd; do
   ev_cmd="$(jq -r --arg ev "$ev" '.hooks[$ev][0].command // ""' "$PATCHED" 2>/dev/null)"
   if [[ "$ev_cmd" == *"$HOOK_TARGET"* ]] && [[ "$ev_cmd" == *"MEMPALACE_TRANSCRIPT_ENABLED=1"* ]]; then
@@ -158,6 +165,15 @@ else
   ok "zero project-directory placeholder tokens survive in patched output"
 fi
 
+# spec 0211 R2 — session recording no longer registers usage capture. This
+# asserts the SOURCE manifest: the replay above rewrites every command, so a
+# capture entry would be masked in $PATCHED.
+if jq -e '[.hooks[] | .[] | (.command // .bash // "") | select(contains("usage-capture.sh"))] | length == 0' \
+     "$MANIFEST" >/dev/null 2>&1; then
+  ok "the manifest names no usage-capture.sh command (spec 0211 R2)"
+else
+  bad "the session-recording manifest names usage-capture.sh (spec 0211 R2)"
+fi
 
 # ---------------------------------------------------------------------------
 echo ""

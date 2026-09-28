@@ -54,6 +54,15 @@
 
 set -euo pipefail
 
+# usage-capture (spec 0206 PLAN v3 step 15): this script is an adopted
+# framework-owned headless launch site. probe_ask()'s `agy -p` call is
+# wrapped via the JSON-response-rewrite helper (verified live
+# byte-identical to plain-text mode on this machine, for this exact
+# prompt shape among others).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck source=scripts/lib/usage-headless.sh
+. "$SCRIPT_DIR/lib/usage-headless.sh"
+
 AGY_BIN="${AGY_BIN:-agy}"
 AGY_PROBE_TIMEOUT="${AGY_PROBE_TIMEOUT:-300}"
 AGY_PROBE_ASK_SHAPE="${AGY_PROBE_ASK_SHAPE:-captured}"
@@ -185,7 +194,7 @@ cleanup() {
 
 # --- The bounded call --------------------------------------------------------
 #
-# THREE TRAPS SIT ON THIS FUNCTION, all of them measured on Bash 3.2.57:
+# FOUR TRAPS SIT ON THIS FUNCTION, all of them measured on Bash 3.2.57:
 #
 # 1. `kill "$pid"` reaches the backgrounded WRAPPER, not the process it forked.
 #    A timed-out `agy` therefore outlives the EXIT trap that removes the
@@ -200,27 +209,84 @@ cleanup() {
 #
 # `wait "$pid" || st=$?` closes all three: the status is captured deliberately
 # and branched on, and never reaches `set -e` in either call shape.
+#
+# 4. `set -m` itself warns ("cannot enable job control in this shell") on some
+#    non-interactive Docker shells (issue #1215) and, under this script's own
+#    `set -euo pipefail`, a build where it returned non-zero would abort the
+#    whole probe right here — before the bounded command even starts. Both
+#    calls are therefore guarded with `2>/dev/null || true`: the warning never
+#    reaches the operator and a non-zero return can never trip `-e`.
+#
+#    That guard is a courtesy, not a functional fallback, and the surrounding
+#    code is NOT correct when job control genuinely fails to enable: a
+#    background job's pgid only diverges from the launching shell's once `-m`
+#    is active (verified directly), so without it `"$@" &` and the watchdog
+#    stay in THIS shell's own process group, `kill -TERM -- "-$pid"` targets a
+#    process group nothing leads, and the signal silently matches zero
+#    processes (already `2>/dev/null`). The bound then degrades to "wait for
+#    the command to exit on its own" — trap 1 above stops being closed, and a
+#    hung `agy` outlives the timeout instead of being killed by it. This
+#    ticket (#1215) scopes to silencing the spurious warning; re-deriving a
+#    watchdog that still works without job control is tracked separately in
+#    issue #1222.
 run_bounded() {
   # run_bounded <output-file> <command> [args...]
   # Returns the command's status, or 124 when the bound was hit.
   local out_file="$1"; shift
-  local pid watchdog st=0 job_control_was_on=0
+  local pid watchdog st=0 job_control_was_on=0 job_control_active=0
 
   case "$-" in *m*) job_control_was_on=1 ;; esac
-  set -m
+  if [ "${AGY_FORCE_NO_JOB_CONTROL:-0}" != "1" ]; then
+    set -m 2>/dev/null || true
+  fi
+
   "$@" > "$out_file" 2>/dev/null &
   pid=$!
-  ( sleep "$AGY_PROBE_TIMEOUT"; kill -TERM -- "-$pid" 2>/dev/null; ) &
+
+  if [ "${AGY_FORCE_NO_JOB_CONTROL:-0}" != "1" ]; then
+    case "$-" in *m*) job_control_active=1 ;; esac
+    if [ "$job_control_active" -eq 1 ]; then
+      local child_pgid
+      child_pgid="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ' || true)"
+      if [ -n "$child_pgid" ] && [ "$child_pgid" != "$$" ]; then
+        job_control_active=1
+      else
+        job_control_active=0
+      fi
+    fi
+  fi
+
+  (
+    sleep "$AGY_PROBE_TIMEOUT"
+    if [ "$job_control_active" -eq 1 ]; then
+      kill -TERM -- "-$pid" 2>/dev/null || true
+    else
+      # Issue #1222: kill the command process tree (descendants then root)
+      kill_tree() {
+        local target="$1" c
+        for c in $(pgrep -P "$target" 2>/dev/null || ps -A -o ppid=,pid= 2>/dev/null | awk -v p="$target" '$1 == p {print $2}'); do
+          kill_tree "$c"
+        done
+        kill -TERM "$target" 2>/dev/null || true
+      }
+      kill_tree "$pid"
+    fi
+  ) &
   watchdog=$!
-  [ "$job_control_was_on" -eq 1 ] || set +m
+
+  [ "$job_control_was_on" -eq 1 ] || set +m 2>/dev/null || true
 
   # `2>/dev/null` suppresses only the shell's own "Terminated: 15" job notice,
   # which `set -m` makes it print on the bounded-out path. It does not touch $st.
   wait "$pid" 2>/dev/null || st=$?
 
-  # Kill the watchdog's whole group too: killing the subshell alone would orphan
-  # its `sleep`, which is the same defect one level up.
-  kill -TERM -- "-$watchdog" 2>/dev/null || true
+  # Kill the watchdog too
+  if [ "$job_control_active" -eq 1 ]; then
+    kill -TERM -- "-$watchdog" 2>/dev/null || true
+  else
+    pkill -TERM -P "$watchdog" 2>/dev/null || true
+    kill -TERM "$watchdog" 2>/dev/null || true
+  fi
   wait "$watchdog" 2>/dev/null || true
 
   # 143 = SIGTERM, i.e. the watchdog fired. Report it as a bound, not a failure.
@@ -240,9 +306,22 @@ run_bounded() {
 ASK_STATUS_FILE=""
 
 probe_ask() {
-  local prompt="$1" out st=0
+  local prompt="$1" out st=0 launch_instant
   out="$(mktemp)"
-  run_bounded "$out" "$AGY_BIN" -p "$prompt" || st=$?
+  launch_instant="$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
+  run_bounded "$out" "$AGY_BIN" -p "$prompt" --output-format json || st=$?
+  # usage-capture (spec 0206): $out currently holds the raw JSON envelope (or
+  # a truncated fragment / nothing on a timeout). This derives+submits one
+  # run-total record and rewrites $out to hold exactly its own `.response`
+  # field — verified live byte-identical to plain-text-mode stdout, INCLUDING
+  # for this exact prompt shape, on this machine. Runs BEFORE the
+  # classification below: a rewrite can change $out's size (a JSON envelope
+  # is never byte-empty even when `.response` is), so the EMPTY/OK verdict
+  # must see the rewritten (text-equivalent) content, not the raw JSON's own
+  # non-emptiness. A parse failure (a timeout truncated $out, or agy wrote a
+  # non-JSON error) leaves $out untouched — the classification below then
+  # sees exactly what it would have without this wrapping.
+  usage_headless_agy_rewrite_json_response "$out" "$launch_instant"
   if [ "$st" -eq 124 ]; then
     printf 'TIMEOUT\n' > "$ASK_STATUS_FILE"
   elif [ ! -s "$out" ]; then

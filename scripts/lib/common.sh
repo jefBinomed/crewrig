@@ -18,23 +18,58 @@ MEMPALACE_MAX_VERSION_EXCLUSIVE="3.7"
 # LAST_BACKUP_PATH — set by every backup_file call so a caller can name the
 # backup it just produced (spec 0089 R9 warning). Deterministic on ALL paths:
 # the path of the backup when one was made, the empty string when the target
-# was absent, or when backup creation failed. Initialising it unconditionally
+# was absent, when backup creation failed, or when 99 same-second collisions
+# exhausted the .NN suffix range (issue #1246). Initialising it unconditionally
 # means a caller reading it after a no-backup call never sees a prior call's
 # value, never sees a nonexistent backup path, and never trips `set -u`
 # (spec 0089 review F2, issue #982).
 LAST_BACKUP_PATH=""
 
+# Backups are owner-only whatever the target's mode (issue #1174, security
+# review S1): a config may hold the MemPalace bearer token, and `cp` alone
+# creates the copy at source-mode & ~umask, so a 0644 source gave a 0644 copy of
+# the credential. The copy is made under umask 077 and then forced to 0600 (the
+# chmod also covers a same-second name that already existed, which cp reuses
+# with its old mode). Every earlier `<target>.bak.*` regular file the user owns
+# is narrowed the same way first, so backups an older release left at 0644 stop
+# exposing the token. A symlink (target or backup) is never chmod-ed: chmod
+# follows links, and the link's own mode is meaningless. No `stat`: `[ -O ]` and
+# chmod are portable across bash 3.2, BSD and GNU.
 backup_file() {
-  local target="$1"
+  local target="$1" old
   LAST_BACKUP_PATH=""
+  for old in "$target".bak.*; do
+    if [ -f "$old" ] && [ ! -L "$old" ] && [ -O "$old" ]; then
+      chmod 600 "$old" 2>/dev/null || true
+    fi
+  done
   if [ -f "$target" ] || [ -L "$target" ]; then
-    local stamp bak
+    local stamp bak n
     stamp="$(date +%Y%m%d-%H%M%S)"
     bak="${target}.bak.${stamp}"
-    if cp -P "$target" "$bak" 2>/dev/null && [ -e "$bak" ]; then
+    if [ -e "$bak" ] || [ -L "$bak" ]; then
+      # Same-second collision (issue #1246): a prior backup_file call already
+      # claimed this second's name. Probe zero-padded .NN suffixes rather than
+      # letting `cp -P` silently overwrite the earlier backup — `-e`/`-L` both
+      # checked because `-P` preserves symlinks and a dangling symlink still
+      # occupies the name.
+      n=1
+      while { [ -e "${target}.bak.${stamp}.$(printf '%02d' "$n")" ] || [ -L "${target}.bak.${stamp}.$(printf '%02d' "$n")" ]; } && [ "$n" -lt 99 ]; do
+        n=$((n + 1))
+      done
+      if [ -e "${target}.bak.${stamp}.$(printf '%02d' "$n")" ] || [ -L "${target}.bak.${stamp}.$(printf '%02d' "$n")" ]; then
+        echo "  WARNING: could not find a free backup name for ${target##*/} after 99 same-second collisions — skipping this backup." >&2
+        return 0
+      fi
+      bak="${target}.bak.${stamp}.$(printf '%02d' "$n")"
+    fi
+    if ( umask 077; cp -P "$target" "$bak" ) 2>/dev/null && [ -e "$bak" ]; then
+      if [ -f "$bak" ] && [ ! -L "$bak" ] && ! chmod 600 "$bak" 2>/dev/null; then
+        echo "  WARNING: could not restrict ${bak##*/} to 0600" >&2
+      fi
       # shellcheck disable=SC2034  # read by scripts that source this lib (R9 warning), not here
       LAST_BACKUP_PATH="$bak"
-      echo "  Backed up: ${target##*/} -> ${target##*/}.bak.${stamp}"
+      echo "  Backed up: ${target##*/} -> ${bak##*/}"
     else
       echo "  WARNING: Failed to back up ${target##*/} (could not create ${bak##*/})" >&2
     fi
@@ -53,9 +88,12 @@ MCP_RESERVED_NAMES=(mempalace sequentialthinking)
 #
 # Folds an operator's pre-existing MCP server declarations back into a
 # freshly-written framework MCP config so custom (non-reserved) servers survive
-# a setup run (spec 0089). The three overwrite-based setups (Gemini, Copilot,
-# Antigravity) each call this ONE helper at their write step, which is what
-# keeps them symmetric (R5) and is the only shape R11's hermetic test can
+# a setup run (spec 0089). The two overwrite-based setups (Copilot, Antigravity)
+# call this ONE helper right after their template write. Gemini merges
+# settings.json in place (spec 0214) and calls it from gemini_settings_write
+# (scripts/lib/gemini-settings.sh) after that merge, where the fold is a content
+# no-op and the helper supplies the R9 warnings. One helper for all three is
+# what keeps them symmetric (R5) and is the only shape R11's hermetic test can
 # exercise without fzf / the `agy` guard / the chroma daemon.
 #
 # Policy (all owned here):
@@ -76,11 +114,25 @@ MCP_RESERVED_NAMES=(mempalace sequentialthinking)
 #
 # Args:
 #   $1 pre_run_mcpservers_json — the target's `.mcpServers` captured BEFORE the
-#      framework overwrite (a JSON object; "" or "{}" when none pre-existed).
+#      framework write (a JSON object; "" or "{}" when none pre-existed).
 #   $2 framework_config_path   — the just-written framework config; rewritten in
 #      place (atomic tmp + mv).
 #   $3 backup_ref              — timestamped backup path named in the R9 warning
 #      (may be empty when the target did not pre-exist).
+
+# _mktemp_secret_file <path_prefix>
+# mktemp a private 0600 temp file next to <path_prefix>, for JSON that may
+# hold a secret and must reach jq via --slurpfile rather than --argjson
+# (never on argv — visible to other local users via /proc/<pid>/cmdline or
+# `ps -axo args`). Echoes the path on success; the caller MUST rm -f it when
+# done. Returns 1 on failure.
+_mktemp_secret_file() {
+  local prefix="$1" f
+  f="$(umask 077; mktemp "${prefix}.secret.XXXXXX")" || return 1
+  chmod 600 "$f" || { rm -f "$f"; return 1; }
+  printf '%s' "$f"
+}
+
 merge_preexisting_mcp_servers() {
   local pre_run="$1" config_path="$2" backup_ref="$3"
   [ -n "$pre_run" ] || pre_run='{}'
@@ -117,10 +169,23 @@ merge_preexisting_mcp_servers() {
   # framework reserved entries survive and operator non-reserved entries win
   # verbatim over any same-named framework default (e.g. a hand-customised
   # `github`).
-  jq --argjson pre "$pre_run" --argjson reserved "$reserved_json" \
-    'def preserved: reduce $reserved[] as $r ($pre; del(.[$r]));
-     .mcpServers = ((.mcpServers // {}) + preserved)' \
-    "$config_path" > "${config_path}.tmp" && mv "${config_path}.tmp" "$config_path"
+
+  # $pre_run can hold an operator's own secret (e.g. a non-reserved server's
+  # env token) — write it to a private 0600 temp file and hand it to jq via
+  # --slurpfile, never --argjson, so it never reaches jq's argv.
+  local pre_file
+  pre_file="$(_mktemp_secret_file "$config_path")" || return 1
+  printf '%s' "$pre_run" > "$pre_file" || { rm -f "$pre_file"; return 1; }
+
+  # Written through write_json_config_secure: mktemp'd output name (no
+  # predictable "${config_path}.tmp" a pre-planted symlink could hijack),
+  # 0600, atomic rename, no symlink follow.
+  write_json_config_secure "$config_path" --slurpfile pre "$pre_file" --argjson reserved "$reserved_json" \
+    'def preserved: reduce $reserved[] as $r ($pre[0]; del(.[$r]));
+     .mcpServers = ((.mcpServers // {}) + preserved)'
+  local rc=$?
+  rm -f "$pre_file"
+  return $rc
 }
 
 # --- Org-declared MCP servers (spec 0091) ------------------------------------
@@ -275,12 +340,21 @@ apply_org_mcp_servers() {
     fi
   done
 
+  # $org_native and $preexisting can each hold an operator's or the org
+  # manifest's own secret (env/header values) — private 0600 temp files +
+  # --slurpfile for both, never --argjson, so neither reaches jq's argv.
+  local org_file pre_file
+  org_file="$(_mktemp_secret_file "$config_path")" || return 1
+  printf '%s' "$org_native" > "$org_file" || { rm -f "$org_file"; return 1; }
+  pre_file="$(_mktemp_secret_file "$config_path")" || { rm -f "$org_file"; return 1; }
+  printf '%s' "$preexisting" > "$pre_file" || { rm -f "$org_file" "$pre_file"; return 1; }
+
   # R11 — a non-reserved org name that collides with an operator pre-existing
   # entry wins; warn (non-silent) and point at the backup.
   local collisions c
-  collisions="$(jq -rn --argjson org "$org_native" --argjson pre "$preexisting" --argjson reserved "$reserved_json" '
-    $org | keys[] as $k
-    | select( ($pre | has($k)) and (($reserved | index($k)) | not) )
+  collisions="$(jq -rn --slurpfile org "$org_file" --slurpfile pre "$pre_file" --argjson reserved "$reserved_json" '
+    $org[0] | keys[] as $k
+    | select( ($pre[0] | has($k)) and (($reserved | index($k)) | not) )
     | $k' 2>/dev/null)"
   while IFS= read -r c; do
     [ -n "$c" ] || continue
@@ -288,11 +362,14 @@ apply_org_mcp_servers() {
     echo "           The prior entry is preserved in the timestamped backup: ${backup_ref:-(none)}"
   done <<< "$collisions"
 
-  # Fold: org (minus reserved) wins over whatever the config holds.
-  jq --argjson org "$org_native" --argjson reserved "$reserved_json" \
-    'def org_min_reserved: reduce $reserved[] as $r ($org; del(.[$r]));
-     .mcpServers = ((.mcpServers // {}) + org_min_reserved)' \
-    "$config_path" > "${config_path}.tmp" && mv "${config_path}.tmp" "$config_path"
+  # Fold: org (minus reserved) wins over whatever the config holds, written
+  # through write_json_config_secure (mktemp'd output name, 0600, atomic).
+  write_json_config_secure "$config_path" --slurpfile org "$org_file" --argjson reserved "$reserved_json" \
+    'def org_min_reserved: reduce $reserved[] as $r ($org[0]; del(.[$r]));
+     .mcpServers = ((.mcpServers // {}) + org_min_reserved)'
+  local rc=$?
+  rm -f "$org_file" "$pre_file"
+  return $rc
 }
 
 # org_mcp_to_claude_argv <name> <neutral_entry_json>
@@ -687,6 +764,29 @@ install_daemon_supervisor() {
   return 0
 }
 
+tls_exec_installed_path() {
+  printf '%s\n' "${MEMPALACE_TLS_EXEC_PATH:-$HOME/.crewrig/tls-exec.sh}"
+}
+
+# Install the TLS-delegation wrapper outside the repository tree, mirroring
+# install_mcp_launcher's rationale: a launchd/systemd supervisor invoking a
+# program under a TCC-protected checkout (~/Documents, ~/Desktop,
+# ~/Downloads) gets a silent `Operation not permitted` (exit 126) that a
+# foreground, user-invoked process never hits (issue #1189). The wrapper
+# itself carries no placeholders, so this is a plain copy, not a sed pass.
+install_tls_exec_wrapper() {
+  local dst src
+  dst="$(tls_exec_installed_path)"
+  src="$CREWRIG_REPO_DIR/scripts/lib/tls-exec.sh"
+  if [ ! -f "$src" ]; then
+    echo "  ERROR: $src missing — tls-exec wrapper not shipped."
+    return 1
+  fi
+  mkdir -p "$(dirname "$dst")"
+  cp "$src" "$dst"
+  chmod 755 "$dst"
+}
+
 # Materialise callback for the ChromaDB unit. Placeholders are chroma-specific:
 # the plist on disk is user-agnostic (no hardcoded $HOME) and is filled here
 # with the detected mempalace interpreter and chroma binary so the supervised
@@ -715,12 +815,14 @@ _materialise_chroma_unit() {
     esac
   fi
 
+  install_tls_exec_wrapper || return 1
+
   sed \
     -e "s|__MEMPALACE_HOME__|${mempalace_home}|g" \
     -e "s|__PIPX_PYTHON__|${pipx_py}|g" \
     -e "s|__CHROMA_BIN__|${chroma_bin}|g" \
     -e "s|__CHROMA_PALACE_PATH__|${chroma_palace_path}|g" \
-    -e "s|__TLS_EXEC__|${CREWRIG_REPO_DIR}/scripts/lib/tls-exec.sh|g" \
+    -e "s|__TLS_EXEC__|$(tls_exec_installed_path)|g" \
     "$src" > "$dst"
 
   if grep -qE '__[A-Z][A-Z0-9_]*__' "$dst" 2>/dev/null; then
@@ -740,11 +842,47 @@ _health_chroma_daemon() {
   return 0
 }
 
+# ensure_mempalace_home
+#
+# Creates ~/.mempalace (and ~/.mempalace/palace, the default palace location)
+# before a supervised MemPalace daemon is started (issue #1196). Idempotent —
+# a no-op when the directories already exist.
+#
+# Both supervised units depend on this directory existing but never create
+# it: the systemd units set WorkingDirectory=%h/.mempalace and log through
+# StandardOutput/StandardError=append:%h/.mempalace/<daemon>.log, and the
+# launchd plists set WorkingDirectory and StandardOutPath to the same place.
+# Neither systemd's append: nor launchd's StandardOutPath/WorkingDirectory
+# creates a missing parent directory, so on a fresh machine systemd fails the
+# unit with status=209/STDOUT and restarts it in a loop. `mempalace init` is
+# no substitute: it takes a project directory to mine, it does not bootstrap
+# the home.
+#
+# The palace subdirectory is created only when MEMPALACE_PALACE_PATH is unset
+# or empty — an override points somewhere else, and this function does not
+# create arbitrary operator-chosen paths.
+ensure_mempalace_home() {
+  local home_dir="$HOME/.mempalace"
+  if ! mkdir -p "$home_dir" 2>/dev/null || [ ! -d "$home_dir" ]; then
+    echo "  ERROR: could not create the MemPalace home directory $home_dir." >&2
+    echo "         The supervised daemons log there and use it as their working directory." >&2
+    return 1
+  fi
+  if [ -z "${MEMPALACE_PALACE_PATH:-}" ]; then
+    if ! mkdir -p "$home_dir/palace" 2>/dev/null || [ ! -d "$home_dir/palace" ]; then
+      echo "  ERROR: could not create the default palace directory $home_dir/palace." >&2
+      return 1
+    fi
+  fi
+  return 0
+}
+
 install_chroma_daemon() {
   local repo_dir="$1"
   CREWRIG_REPO_DIR="$repo_dir"
   echo ""
   echo "Installing shared ChromaDB HTTP daemon supervisor (issue #98)..."
+  ensure_mempalace_home || return 1
   install_daemon_supervisor \
     "com.mempalace.chroma-server" \
     "mempalace-chroma-server" \
@@ -929,6 +1067,7 @@ install_mcp_daemon() {
   CREWRIG_REPO_DIR="$repo_dir"
   echo ""
   echo "Installing shared MemPalace MCP HTTP daemon supervisor (spec 0113)..."
+  ensure_mempalace_home || return 1
   # The token must exist before the launcher runs: it refuses to serve without
   # one, by design (an empty token disables the bearer check upstream).
   if ! mcp_token_read_or_create >/dev/null; then
@@ -1169,7 +1308,8 @@ restore_mempalace_registration() {
   if [ "$captured" = "null" ] || [ -z "$captured" ]; then
     write_json_config_secure "$cfg" 'del(.mcpServers.mempalace)' || return 1
   else
-    write_json_config_secure "$cfg" --argjson v "$captured" '.mcpServers.mempalace = $v' || return 1
+    CREWRIG_MCP_RESTORE="$captured" write_json_config_secure "$cfg" \
+      '.mcpServers.mempalace = ($ENV.CREWRIG_MCP_RESTORE | fromjson)' || return 1
   fi
   return 0
 }
@@ -1199,16 +1339,16 @@ register_mempalace_mcp() {
         chmod 600 "$cfg" || return 1
       fi
       claude mcp remove --scope user mempalace >/dev/null 2>&1 || true
-      write_json_config_secure "$cfg" --arg url "$url" --arg auth "Bearer ${token}" \
-        '.mcpServers.mempalace = {type:"http", url:$url, headers:{Authorization:$auth}}' \
+      CREWRIG_MCP_AUTH="Bearer ${token}" write_json_config_secure "$cfg" --arg url "$url" \
+        '.mcpServers.mempalace = {type:"http", url:$url, headers:{Authorization:$ENV.CREWRIG_MCP_AUTH}}' \
         || return 1
       return 0
       ;;
     gemini|copilot)
       cfg="$(mcp_assistant_config_path "$cli")"
       [ -f "$cfg" ] || return 1
-      write_json_config_secure "$cfg" --arg url "$url" --arg auth "Bearer ${token}" \
-        '.mcpServers.mempalace = {type:"http", url:$url, headers:{Authorization:$auth}}' \
+      CREWRIG_MCP_AUTH="Bearer ${token}" write_json_config_secure "$cfg" --arg url "$url" \
+        '.mcpServers.mempalace = {type:"http", url:$url, headers:{Authorization:$ENV.CREWRIG_MCP_AUTH}}' \
         || return 1
       return 0
       ;;
@@ -1217,8 +1357,8 @@ register_mempalace_mcp() {
       # type key — grounded in docs/cli-matrix.md row 7h.
       cfg="$(mcp_assistant_config_path "$cli")"
       [ -f "$cfg" ] || return 1
-      write_json_config_secure "$cfg" --arg url "$url" --arg auth "Bearer ${token}" \
-        '.mcpServers.mempalace = {serverUrl:$url, headers:{Authorization:$auth}}' \
+      CREWRIG_MCP_AUTH="Bearer ${token}" write_json_config_secure "$cfg" --arg url "$url" \
+        '.mcpServers.mempalace = {serverUrl:$url, headers:{Authorization:$ENV.CREWRIG_MCP_AUTH}}' \
         || return 1
       return 0
       ;;
@@ -1482,11 +1622,11 @@ mcp_report_assistant_arrangements() {
 # replacing the opt-in offer_mcp_http_switch.
 #
 # Call each setup script's instance AFTER the stdio-shaped write it must
-# survive: `mempalace` is in MCP_RESERVED_NAMES, so merge_preexisting_mcp_servers
-# deliberately does not preserve an operator's entry under that name, and the
-# framework write that replaces it is stdio-shaped. Running the helper after
-# that write lets its HTTP registration overwrite the stdio entry instead of
-# being clobbered by it.
+# survive: `mempalace` is in MCP_RESERVED_NAMES, so neither
+# merge_preexisting_mcp_servers nor the Gemini in-place merge (spec 0214)
+# preserves a prior entry under that name, and the framework write that
+# replaces it is stdio-shaped. Running the helper after that write lets its
+# HTTP registration replace the stdio entry instead of being clobbered by it.
 #
 # Probe-first flow (R18): the "is the daemon actually serving" decision is
 # made with the positive authenticated accept probe `_mcp_daemon_probe_accepts`
@@ -1782,6 +1922,37 @@ write_json_config_secure() {
     echo "  ERROR: $cfg holds a bearer token and could not be restricted to 0600." >&2
     return 1
   }
+  return 0
+}
+
+# write_json_config_secure_from <dest> <src|-> <jq_program> [jq_args...]
+#
+# Same guarantees as write_json_config_secure (mktemp'd tmp name, 0600,
+# atomic rename, no symlink follow) for a config that does not yet exist, or
+# whose entire content is being replaced from a DIFFERENT source rather than
+# transformed in place. <src> is a file path to copy from, or the literal
+# "-" to read the caller's stdin. Stages <src>/stdin into a fresh mktemp'd
+# 0600 file next to <dest>, transforms it in place via write_json_config_secure
+# (reusing its exact, already-tested contract rather than widening it), then
+# `mv`s the staged file onto <dest> — rename(2) never follows a symlink at
+# the destination, so this is safe regardless of <dest>'s prior state (absent,
+# a regular file, or a pre-planted symlink).
+write_json_config_secure_from() {
+  local dest="$1" src="$2"; shift 2
+  local stage
+  stage="$(umask 077; mktemp "${dest}.stage.XXXXXX")" || return 1
+  chmod 600 "$stage" || { rm -f "$stage"; return 1; }
+  if [ "$src" = "-" ]; then
+    cat > "$stage" || { rm -f "$stage"; return 1; }
+  else
+    cp "$src" "$stage" || { rm -f "$stage"; return 1; }
+  fi
+  if ! write_json_config_secure "$stage" "$@"; then
+    rm -f "$stage"
+    return 1
+  fi
+  mv "$stage" "$dest" || { rm -f "$stage"; return 1; }
+  chmod 600 "$dest" || return 1
   return 0
 }
 
@@ -2384,7 +2555,7 @@ migrate_antigravity_superseded_components() {
       # a LITERAL. Read as a regexp it would over-match — a directory named
       # `a.b` would satisfy a served name `axb` — and this predicate's true
       # branch deletes.
-      if printf '%s\n' "$names" | grep -qxF -- "$declared"; then
+      if grep -qxF -- "$declared" <<< "$names"; then
         in_set=1
       fi
       local has_prov=0
@@ -2427,4 +2598,33 @@ migrate_antigravity_superseded_components() {
     echo "  Removed $removed framework component(s) from the superseded placement at $superseded_root."
   fi
   return 0
+}
+
+# warn_if_linked_worktree <repo_dir> <label>
+#
+# spec 0206 plan v3 orchestrator addition (issue #1169): the usage-capture
+# shim and the Antigravity statusline shim are wired by their IN-REPO
+# ABSOLUTE PATH, the same treatment hooks/worktree-git-guard.sh's own
+# GUARD_ABS already carries (spec 0206 Risks — "the accepted cost of the
+# in-repo absolute path"). That path dies the moment `git worktree remove`
+# clears the checkout it points into. Warn the operator, at install time,
+# when the checkout being installed FROM is itself a linked git worktree — a
+# ticket `.worktrees/<id>/` or an Orca workspace — so the dependency is
+# disclosed rather than discovered later as a silently dead hook.
+#
+# `git rev-parse --git-common-dir` names the repository's SHARED .git
+# directory: run with `-C repo_dir`, it prints the literal relative string
+# `.git` from the MAIN checkout (whose cwd already equals repo_dir) and an
+# ABSOLUTE path from any linked worktree (scripts/worktree-claim.sh l. 21-26
+# documents the same property for the same reason).
+warn_if_linked_worktree() {
+  local repo_dir="$1" label="$2"
+  local common_dir
+  common_dir="$(git -C "$repo_dir" rev-parse --git-common-dir 2>/dev/null || true)"
+  if [ -n "$common_dir" ] && [ "$common_dir" != ".git" ]; then
+    echo "  WARNING: this checkout is a linked git worktree ($repo_dir)."
+    echo "           The $label wiring above points INTO this checkout — running"
+    echo "           'git worktree remove' on it breaks the wired hook silently"
+    echo "           until this installer is re-run against a durable checkout."
+  fi
 }

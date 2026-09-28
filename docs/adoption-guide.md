@@ -132,6 +132,14 @@ git add crewrig.config.toml
 git commit -m "⚙️ Initialise crewrig.config.toml for <YOUR-ORG>"
 ```
 
+### Model-mapping overrides — the org-owned channel
+
+`model-mappings/<target>.org.yml` is the org-owned channel through which your organization changes what a declared `intelligence` rung resolves to on each target. One file ships per target, present and empty — editing none of them changes nothing.
+
+Beyond a core mapping's shape, an org file adds exactly two keys: `remove:`, to take an offering, surface, or guard state out of circulation, and `replaces-core:`, to replace the core mapping outright for that target. The channel is excluded from upstream synchronization, so your edits never conflict with an upstream update.
+
+The full schema and worked examples are in [`docs/org-model-mapping-override.md`](org-model-mapping-override.md); the mapping shape it overrides is normative in [`docs/model-mapping-format.md`](model-mapping-format.md).
+
 ## Step 3 — Initialize the organization identity
 
 Copy the organization identity template and populate its sections.
@@ -396,9 +404,10 @@ drop the flag and run an ordinary sync.
 **Most-likely error — unrelated uncommitted change:** The provenance commit
 refuses to sweep in changes outside the paths governed by
 `.crewrig/core-paths.txt` and `.crewrig/.synced-markers/`. Governed means
-every `strict` or `adopt-on-edit` manifest entry, minus any `excluded` entry
-nested under it — `excluded` entries themselves (org paths such as
-`specs/org`, `docs/org`, `AGENTS.org.md`) are never part of this governed
+every `strict`, `adopt-on-edit`, or `regenerable` manifest entry, minus any
+`excluded` entry nested under it — `excluded` entries themselves (org paths
+such as `specs/org`, `docs/org`, `AGENTS.org.md`, and the org-owned
+`model-mappings/*.org.yml` override channel) are never part of this governed
 set, so an unrelated edit under one of them still aborts the graft commit
 exactly like any other unrelated change. The restore still
 runs and its output stays in your working tree, but the script exits 1
@@ -494,6 +503,23 @@ rather than the framework directly, its published artifact form changes
 starting with the first `hello-world` major release published after this
 change — check that release's own asset for confirmation rather than
 assuming a specific version number here.
+
+## Migrating to the CLI-agnostic model declaration (specs 0200, 0201)
+
+A fork that declares no capability profile on its own agent sources and populates no override-channel file takes **no action**: its own agent sources keep the behavior they have today.
+
+A stale per-agent directory left under the user's Claude Code agent directory by the retired compiled layout needs **no manual action** either — it is removed at the next assisted setup. A synchronizing fork lands on the flat compiled layout without acting, because the compiled agent output trees carry the `regenerable` synchronization policy.
+
+The full account — what changed, why, and the per-agent migration record — is in [`docs/agent-profile-migration.md`](agent-profile-migration.md).
+
+## Enabling GitLab release publishing (optional)
+
+A GitLab-hosted fork can publish extension releases the same way the
+upstream GitHub-hosted repository does, from two generated pipeline jobs
+(`release`, `release-rehearsal`) that need no adopter-authored release
+automation. See [GitLab release publishing](gitlab-release-publishing.md)
+for the CI/CD variables to declare, how to run a non-publishing rehearsal,
+how to publish, and how to complete or retract an incomplete tag.
 
 ## Troubleshooting
 
@@ -605,3 +631,21 @@ repository, not the fork.
    not-yet-synced fork, `release-extension.yml`) from the fork's Actions
    tab, or remove or override the workflow file, before the next
    triggering push.
+
+### GitLab release job refuses immediately, naming a missing credential {#gitlab-release-missing-token}
+
+**Cause:** The `GITLAB_TOKEN` CI/CD variable is not declared, or is empty,
+on the GitLab project running the `release` job. See
+[GitLab release publishing](gitlab-release-publishing.md) → *Variables*.
+
+**Effect:** The `release` job exits non-zero before writing anything or
+contacting any forge — it refuses by naming the missing variable rather
+than failing deeper in the engine, and it never prints a credential to the
+job log (spec 0213 requirement 11).
+
+**Resolution:** Declare a masked `GITLAB_TOKEN` CI/CD variable — a project
+access token with the `api` and `write_repository` scopes, on a role
+allowed to push to the protected `main` branch and create tags — under
+**Settings → CI/CD → Variables**, then re-run the pipeline. The manual
+`release-rehearsal` job needs no credential at all and can be used to
+exercise the rest of the pipeline first.

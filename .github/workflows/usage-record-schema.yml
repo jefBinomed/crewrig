@@ -1,0 +1,45 @@
+name: Usage Record Schema Check
+
+on:
+  pull_request:
+    branches: [main, "release/**"]
+    paths:
+      - "schemas/**"
+      - "scripts/lib/usage-record-validator.js"
+      - "scripts/tests/test-usage-record-schema.sh"
+      - "scripts/tests/fixtures/usage-records/**"
+      - "package.json"
+      - "package-lock.json"
+  push:
+    branches: [main, "release/**"]
+    paths:
+      - "schemas/**"
+      - "scripts/lib/usage-record-validator.js"
+      - "scripts/tests/test-usage-record-schema.sh"
+      - "scripts/tests/fixtures/usage-records/**"
+      - "package.json"
+      - "package-lock.json"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  usage-record-schema:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Validate usage record schema and fixtures
+        run: bash scripts/tests/test-usage-record-schema.sh
+      - name: Cancel workflow on job failure
+        if: failure()
+        uses: ./.github/actions/cancel-on-failure

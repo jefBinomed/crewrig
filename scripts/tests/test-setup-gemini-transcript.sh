@@ -14,6 +14,10 @@
 #        target path (prefixed by env vars) and worktree-git-guard.sh to the
 #        in-repo absolute path (without env prefix).
 #   R3 — zero ${GEMINI_PROJECT_DIR} placeholder tokens survive in the patched output.
+#   spec 0211 R2 — the session-recording manifest registers no usage-capture.sh
+#        command: usage capture has its own opt-in, covered (with the
+#        never-copied invariant for usage-capture.sh) by
+#        scripts/tests/test-setup-usage-capture-optin.sh.
 #
 # HERMETIC: no HOME writes, no network, no interactive script runs. All
 # transforms target throwaway paths under a temp root removed on exit.
@@ -110,6 +114,14 @@ if grep -q '\${GEMINI_PROJECT_DIR}' "$PATCHED"; then
   bad "surviving \${GEMINI_PROJECT_DIR} token found in patched output"
 else
   ok "zero \${GEMINI_PROJECT_DIR} placeholder tokens survive in patched output"
+fi
+
+# spec 0211 R2 — session recording no longer registers usage capture.
+if jq -e '[.. | objects | select(.type? == "command") | .command | select(contains("usage-capture.sh"))] | length == 0' \
+     "$PATCHED" >/dev/null 2>&1; then
+  ok "no patched command names usage-capture.sh (spec 0211 R2)"
+else
+  bad "a patched session-recording command names usage-capture.sh (spec 0211 R2)"
 fi
 
 # ---------------------------------------------------------------------------

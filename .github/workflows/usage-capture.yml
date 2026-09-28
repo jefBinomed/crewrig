@@ -1,0 +1,80 @@
+name: Usage Capture Check
+
+on:
+  pull_request:
+    branches: [main, "release/**"]
+    paths:
+      - "hooks/usage-capture.sh"
+      - "hooks/antigravity-statusline-shim.sh"
+      - "hooks/claude-transcript-hooks.json"
+      - "hooks/gemini-transcript-hooks.json"
+      - "hooks/copilot-transcript-hooks.json"
+      - "scripts/lib/usage-capture/**"
+      - "scripts/lib/usage-headless.sh"
+      - "scripts/usage-backfill.sh"
+      - "scripts/tests/test-usage-capture.sh"
+      - "scripts/tests/fixtures/usage-capture/**"
+      - "hooks/claude-usage-capture-hooks.json"
+      - "hooks/gemini-usage-capture-hooks.json"
+      - "hooks/copilot-usage-capture-hooks.json"
+      - "scripts/lib/usage-capture-optin.sh"
+      - "scripts/lib/common.sh"
+      - "scripts/setup-claude-interactive.sh"
+      - "scripts/setup-gemini-interactive.sh"
+      - "scripts/setup-copilot-interactive.sh"
+      - "scripts/tests/test-setup-usage-capture-optin.sh"
+      - "scripts/tests/fixtures/setup-usage-capture/**"
+      - "package.json"
+      - "package-lock.json"
+  push:
+    branches: [main, "release/**"]
+    paths:
+      - "hooks/usage-capture.sh"
+      - "hooks/antigravity-statusline-shim.sh"
+      - "hooks/claude-transcript-hooks.json"
+      - "hooks/gemini-transcript-hooks.json"
+      - "hooks/copilot-transcript-hooks.json"
+      - "scripts/lib/usage-capture/**"
+      - "scripts/lib/usage-headless.sh"
+      - "scripts/usage-backfill.sh"
+      - "scripts/tests/test-usage-capture.sh"
+      - "scripts/tests/fixtures/usage-capture/**"
+      - "hooks/claude-usage-capture-hooks.json"
+      - "hooks/gemini-usage-capture-hooks.json"
+      - "hooks/copilot-usage-capture-hooks.json"
+      - "scripts/lib/usage-capture-optin.sh"
+      - "scripts/lib/common.sh"
+      - "scripts/setup-claude-interactive.sh"
+      - "scripts/setup-gemini-interactive.sh"
+      - "scripts/setup-copilot-interactive.sh"
+      - "scripts/tests/test-setup-usage-capture-optin.sh"
+      - "scripts/tests/fixtures/setup-usage-capture/**"
+      - "package.json"
+      - "package-lock.json"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  usage-capture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Validate usage capture adapters and fixtures
+        run: bash scripts/tests/test-usage-capture.sh
+
+      - name: Validate the usage-capture opt-in of Claude Code, Gemini CLI and Copilot CLI
+        run: bash scripts/tests/test-setup-usage-capture-optin.sh
+      - name: Cancel workflow on job failure
+        if: failure()
+        uses: ./.github/actions/cancel-on-failure

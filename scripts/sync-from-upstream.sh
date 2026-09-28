@@ -7,7 +7,7 @@
 # Reads the upstream URL from crewrig.config.toml (canonical_repo field).
 #
 # Policy-driven (spec 0020). Each .crewrig/core-paths.txt entry carries one
-# of three policies (default `strict` when the column is absent):
+# of four policies (default `strict` when the column is absent):
 #
 #   strict         Upstream-owned. A local modification relative to FETCH_HEAD
 #                  aborts the sync — revert or promote the change to overlay
@@ -16,10 +16,20 @@
 #                  permanently. The "modified?" decision is stateless and
 #                  two-tier (committed marker fast path, then upstream-history
 #                  membership). Never aborts the sync.
+#   regenerable    Upstream-owned content the component build regenerates
+#                  (spec 0199 R42) — today, the four compiled agent output
+#                  trees. Restores exactly as `strict` restores, including
+#                  the spec-0064 orphan cleanup, but NEVER aborts on a local
+#                  divergence: under an organization-level model-mapping
+#                  override the divergence is the build's own correct
+#                  output, and this script cannot run the build to tell the
+#                  two apart. Each restored member whose local content had
+#                  diverged is reported on stdout.
 #   excluded       Org-owned. Never guarded, never restored, never touched.
 #
-# An `excluded` entry nested under a `strict`/`adopt-on-edit` parent (e.g.
-# `specs/org` under `specs`, `.crewrig/.synced-markers` under `.crewrig`) is
+# An `excluded` entry nested under a `strict`/`adopt-on-edit`/`regenerable`
+# parent (e.g. `specs/org` under `specs`, `.crewrig/.synced-markers` under
+# `.crewrig`, `model-mappings/*.org.yml` under `model-mappings`) is
 # carved out of BOTH the parent's dirty guard and its restore via a
 # `:(exclude)` git pathspec — so org content under a core parent can neither
 # abort the sync nor be overwritten.
@@ -53,9 +63,9 @@
 #   - Anti-pollution guard: aborts the history-preserving step (without
 #     committing, leaving the already-restored files in the working tree) if
 #     the working tree carries an uncommitted change outside the governed set
-#     — every `strict`/`adopt-on-edit` manifest entry, minus any nested
-#     `excluded` child — plus the .crewrig/.synced-markers/ bookkeeping
-#     directory.
+#     — every `strict`/`adopt-on-edit`/`regenerable` manifest entry, minus
+#     any nested `excluded` child — plus the .crewrig/.synced-markers/
+#     bookkeeping directory.
 #   - Signing refusal: aborts the history-preserving step (same posture as
 #     the anti-pollution guard — no commit, branch tip unmoved, restored
 #     files left in the working tree) when the repository is configured to
@@ -201,6 +211,48 @@ upstream_has_blob() {
 }
 
 # ---------------------------------------------------------------------------
+# is_org_component_output <tracked-path>
+# Return 0 iff <tracked-path> is a compiled output corresponding to an active
+# organization-tier component definition under artifacts/org/ (spec 0204).
+# ---------------------------------------------------------------------------
+is_org_component_output() {
+  local file="$1" comp=""
+  case "$file" in
+    .claude/skills/*|.gemini/skills/*|.github/skills/*|.agents/skills/*)
+      comp="${file#*/skills/}"
+      comp="${comp%%/*}"
+      ;;
+    .gemini/commands/*.toml)
+      comp="${file#.gemini/commands/}"
+      comp="${comp%.toml}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+  [ -n "$comp" ] || return 1
+
+  local org_root="$REPO_DIR/artifacts/org"
+  [ -d "$org_root" ] || return 1
+
+  # Direct match: directory under artifacts/org/skills/<comp> or command file artifacts/org/commands/<comp>.md
+  if [ -d "$org_root/skills/$comp" ] || [ -f "$org_root/commands/$comp.md" ]; then
+    return 0
+  fi
+
+  # Fallback: declared name: in YAML frontmatter may differ from the directory/file name
+  local src
+  for src in "$org_root/skills"/*/SKILL.md "$org_root/commands"/*.md; do
+    [ -f "$src" ] || continue
+    if grep -q "^name:[[:space:]]*[\"']\?${comp}[\"']\?[[:space:]]*\$" "$src" 2>/dev/null; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+# ---------------------------------------------------------------------------
 # resolves_at_fetch_head <path>
 # Return 0 iff <path> resolves to an object (blob OR tree) in the fetched
 # upstream tree. `git cat-file -e FETCH_HEAD:<path>` succeeds for either
@@ -333,7 +385,7 @@ reconcile_dir() {
 
   while IFS= read -r f; do
     [ -n "$f" ] || continue
-    if printf '%s\n' "$u_list" | grep -Fxq "$f" && [ ! -e "$REPO_DIR/$f" ]; then
+    if grep -Fxq "$f" <<< "$u_list" && [ ! -e "$REPO_DIR/$f" ]; then
       # Upstream has it, org doesn't.
       if path_in_org_history "$f"; then
         # R2 — org deleted it; stays gone.
@@ -345,7 +397,7 @@ reconcile_dir() {
         [ -n "$new_sha" ] && write_marker "$f" "$new_sha"
         echo "Added (new upstream file): $f" >&2
       fi
-    elif ! printf '%s\n' "$u_list" | grep -Fxq "$f"; then
+    elif ! grep -Fxq "$f" <<< "$u_list"; then
       # Org has it, upstream dropped/never had it → org-owned, never touched.
       :
     else
@@ -357,8 +409,9 @@ reconcile_dir() {
 
 # ---------------------------------------------------------------------------
 # path_is_governed <path>
-# Return 0 iff <path> is covered by the union of every `strict` or
-# `adopt-on-edit` entry declared in .crewrig/core-paths.txt, MINUS any
+# Return 0 iff <path> is covered by the union of every `strict`,
+# `adopt-on-edit`, or `regenerable` entry declared in .crewrig/core-paths.txt,
+# MINUS any
 # `excluded` entry nested under one of those governed parents (e.g.
 # `specs/org` under `specs`, `docs/org` under `docs`) — carved out the same
 # way the dirty-guard and apply loops carve them out, via
@@ -377,7 +430,7 @@ path_is_governed() {
   esac
   for i in "${!PATHS[@]}"; do
     case "${POLICIES[$i]}" in
-      strict|adopt-on-edit) ;;
+      strict|adopt-on-edit|regenerable) ;;
       *) continue ;;
     esac
     gov="${PATHS[$i]}"
@@ -519,7 +572,7 @@ for i in "${!PATHS[@]}"; do
       # Org-owned: never touched.
       continue
       ;;
-    strict)
+    strict|regenerable)
       if ! resolves_at_fetch_head "$path"; then
         echo "Warning: skipping manifest entry absent from upstream: $path" >&2
         continue
@@ -535,6 +588,14 @@ for i in "${!PATHS[@]}"; do
             case "$member" in "$excl"/*|"$excl") skip=1; break ;; esac
           done < <(excluded_children_of "$path")
           [ "$skip" -eq 1 ] && continue
+          # spec 0199 R42/R48: under `regenerable`, a local divergence never
+          # aborts (the dirty-core loop above only ever populates DIRTY for
+          # `strict`), but every member restored over a divergence is
+          # reported — checked BEFORE the restore, since afterwards the
+          # member no longer looks dirty.
+          if [ "$policy" = "regenerable" ] && strict_blob_is_dirty "$member"; then
+            echo "Restored (diverged, regenerable): $member"
+          fi
           git restore --source=FETCH_HEAD --worktree -- "$member"
         done < <(git ls-tree -r --name-only FETCH_HEAD -- "$path/" 2>/dev/null)
         # Delete locally tracked files absent from FETCH_HEAD (spec 0064 orphan cleanup).
@@ -545,12 +606,20 @@ for i in "${!PATHS[@]}"; do
             case "$tracked" in "$excl"/*|"$excl") skip=1; break ;; esac
           done < <(excluded_children_of "$path")
           [ "$skip" -eq 1 ] && continue
+          # spec 0204: preserve locally tracked compiled outputs corresponding to
+          # active organization-tier component definitions under artifacts/org/
+          if is_org_component_output "$tracked"; then
+            continue
+          fi
           if ! git ls-tree FETCH_HEAD -- "$tracked" 2>/dev/null | grep -q .; then
             rm -f "$REPO_DIR/$tracked"
             echo "Removed (upstream-deleted): $tracked"
           fi
         done < <(cd "$REPO_DIR" && git ls-files -- "$path/")
       else
+        if [ "$policy" = "regenerable" ] && strict_blob_is_dirty "$path"; then
+          echo "Restored (diverged, regenerable): $path"
+        fi
         spec=()
         while IFS= read -r -d '' item; do
           spec+=("$item")
@@ -645,9 +714,9 @@ if [ "$PRESERVE_HISTORY" = true ]; then
   fi
 
   # R8 — anti-pollution guard: reject any uncommitted change outside the
-  # governed set — every `strict`/`adopt-on-edit` manifest entry, minus any
-  # `excluded` child nested under it — plus the .crewrig/.synced-markers/
-  # bookkeeping directory (path_is_governed).
+  # governed set — every `strict`/`adopt-on-edit`/`regenerable` manifest
+  # entry, minus any `excluded` child nested under it — plus the
+  # .crewrig/.synced-markers/ bookkeeping directory (path_is_governed).
   # On violation, print the offending path(s), leave the already-restored
   # files in the working tree, create no commit, exit non-zero.
   UNGOVERNED=()

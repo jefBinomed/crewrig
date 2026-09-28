@@ -1,0 +1,15 @@
+{
+  "currentModel": "gpt-5-copilot",
+  "modelMetrics": {
+    "gpt-5-copilot": {
+      "usage": {
+        "inputTokens": 2100,
+        "outputTokens": 340,
+        "cacheReadTokens": 500,
+        "cacheWriteTokens": 60,
+        "reasoningTokens": 15
+      }
+    }
+  },
+  "unenumeratedTextField": "CANARY-1201-COPILOT-UNENUMERATED: synthetic key, not part of the real usage file"
+}

@@ -141,6 +141,46 @@
 #      the opposite of what happened. Guards both readers of that pattern —
 #      the script's post-condition and commit_is_signed.
 #
+# Spec-0199 `regenerable` policy cases (issue #1119, plan step 9 — written and
+# proven red against the unmodified script before step 10 edits it). Letters
+# continue the suite's convention; PLAN v2's proposed kk-pp collide with the
+# spec-0129/0148 cases already occupying those letters above, so these use
+# qq-vv instead:
+#  qq. A diverged member under a `regenerable` directory entry does not
+#      abort: exit 0, the member is restored from upstream, and stdout
+#      reports it as restored-over-diverged (R42, R48).
+#  rr. A diverged member under a still-`strict` compiled skill entry still
+#      aborts: exit 1, stderr names it — the regression control that proves
+#      the widened arm did not silently spread to the skill/command trees
+#      (R45, R50).
+#  ss. A fork with no divergence is unaffected (R47, R50), restated per the
+#      APPROVE verdict's v2-F5 fix as a two-run differential rather than a
+#      comparison against an unobtainable "pre-change" baseline: one run
+#      with the four agent trees `strict`, one with them `regenerable`, over
+#      an otherwise-identical fixture with no divergence — the two runs'
+#      resulting worktrees and stdout/stderr streams must be byte-identical.
+#  tt. `--preserve-history` (spec 0086 R8): an uncommitted change under a
+#      `regenerable` entry does not block the graft commit; one under an
+#      unlisted path still does (R49).
+#  uu. The spec-0064 orphan cleanup still runs under `regenerable`: a locally
+#      tracked file absent from upstream is removed and reported, exactly as
+#      the `strict` policy already behaves (Decision 6).
+#  vv. An org channel file nested under the still-`strict` `model-mappings`
+#      parent is neither restored nor able to abort the sync — the R5
+#      carve-out this ticket's manifest entries rely on (R5).
+#  ww. A fork lands on the new flat compiled-agent layout without acting (spec 0201).
+#
+# Spec-0204 organization-tier compiled skill/command preservation cases (issue #1137):
+#  xx. Active org-owned compiled skill under strict directory is preserved across sync (R1, R2).
+#  yy. Active org-owned compiled command under strict directory is preserved across sync (R1, R2).
+#  zz. Upstream-deleted core skill is removed by orphan cleanup (R3).
+#  aaa. Retired organization skill is cleaned up as orphan when definition removed (R4).
+#
+# Spec-0064/0020 regression case (issue #1213):
+#  bbb. `ci/org/` declared `excluded` (nested under the strict `ci` parent,
+#       same pattern as case s for `specs/org`) is NOT deleted by the strict
+#       directory's orphan-cleanup pass, and does not abort the dirty guard.
+#
 # Usage:
 #   bash scripts/tests/test-sync-from-upstream.sh
 
@@ -320,7 +360,7 @@ run_case_dirty_report() {
     fi
   done
   for p in ${absent[@]+"${absent[@]}"}; do
-    if printf '%s\n' "$stderr_out" | grep -qxF "  $p"; then
+    if grep -qxF "  $p" <<< "$stderr_out"; then
       echo "FAIL  $name (stderr names '$p' as its own line, which it must not)"
       ok=0
     fi
@@ -2620,6 +2660,606 @@ STUB
     pass=$((pass + 1))
   else
     echo "FAIL  case-pp: ensure_ssh_signing_capability failed unexpectedly on valid environment"
+    fail=$((fail + 1))
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Case qq — spec 0199 R42, R48: a diverged member under a `regenerable`
+# directory entry does not abort the sync; it is restored from upstream and
+# reported.
+# ---------------------------------------------------------------------------
+{
+  upstream="$(mktemp -d "$TMP_ROOT/upstream.XXXXXX")"
+  init_git_repo "$upstream"
+  make_initial_commit "$upstream" \
+    ".claude/agents/dev.md" "upstream agent content"
+
+  adopter="$(mktemp -d "$TMP_ROOT/adopter.XXXXXX")"
+  init_git_repo "$adopter"
+  printf 'canonical_repo = "%s"\n' "$upstream" > "$adopter/crewrig.config.toml"
+  mkdir -p "$adopter/.crewrig"
+  printf '.claude/agents\tregenerable\n' > "$adopter/.crewrig/core-paths.txt"
+  make_initial_commit "$adopter" \
+    ".claude/agents/dev.md" "upstream agent content"
+  # Diverge locally — representative of an org override regenerating the
+  # compiled output without the fork syncing since.
+  printf 'regenerated content\n' > "$adopter/.claude/agents/dev.md"
+
+  actual_exit=0
+  stdout_out="$(cd "$adopter" && CREWRIG_REPO_DIR="$adopter" bash "$SCRIPT_UNDER_TEST" 2>/dev/null)" || actual_exit=$?
+
+  ok=1
+  if [ "$actual_exit" -ne 0 ]; then
+    echo "FAIL  case-qq: expected exit 0, got $actual_exit"
+    ok=0
+  fi
+  restored="$(cat "$adopter/.claude/agents/dev.md" 2>/dev/null)"
+  if [ "$restored" != "upstream agent content" ]; then
+    echo "FAIL  case-qq: diverged agent output was not restored (got '$restored')"
+    ok=0
+  fi
+  if ! echo "$stdout_out" | grep -qF "Restored (diverged, regenerable): .claude/agents/dev.md"; then
+    echo "FAIL  case-qq: missing 'Restored (diverged, regenerable)' report line"
+    echo "      actual stdout: $stdout_out"
+    ok=0
+  fi
+  if [ "$ok" -eq 1 ]; then
+    echo "PASS  case-qq: a regenerable directory entry does not abort on a diverged member; it is restored and reported"
+    pass=$((pass + 1))
+  else
+    fail=$((fail + 1))
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Case rr — spec 0199 R45, R50: a diverged member under a still-`strict`
+# compiled skill entry still aborts — the regression control proving the
+# widened arm did not spread to the skill/command trees.
+# ---------------------------------------------------------------------------
+{
+  upstream="$(mktemp -d "$TMP_ROOT/upstream.XXXXXX")"
+  init_git_repo "$upstream"
+  make_initial_commit "$upstream" \
+    ".claude/skills/dev/SKILL.md" "upstream skill content"
+
+  adopter="$(mktemp -d "$TMP_ROOT/adopter.XXXXXX")"
+  init_git_repo "$adopter"
+  printf 'canonical_repo = "%s"\n' "$upstream" > "$adopter/crewrig.config.toml"
+  mkdir -p "$adopter/.crewrig"
+  printf '.claude/skills\tstrict\n' > "$adopter/.crewrig/core-paths.txt"
+  make_initial_commit "$adopter" \
+    ".claude/skills/dev/SKILL.md" "upstream skill content"
+  printf 'hand-edited skill\n' > "$adopter/.claude/skills/dev/SKILL.md"
+
+  run_case_stderr "case-rr a diverged strict skill output still aborts" \
+    "$adopter" 1 ".claude/skills/dev/SKILL.md"
+}
+
+# ---------------------------------------------------------------------------
+# Case ss — spec 0199 R47, R50 (PLAN v2 named edit 5 / v2-F5): a fork with no
+# divergence is unaffected, proven as a two-run differential (a "pre-change
+# outcome" is not obtainable from inside this harness) — one run with the
+# four agent trees `strict`, one `regenerable`, over an otherwise-identical
+# fixture; the resulting worktrees and captured streams must be identical.
+# ---------------------------------------------------------------------------
+{
+  upstream="$(mktemp -d "$TMP_ROOT/upstream.XXXXXX")"
+  init_git_repo "$upstream"
+  make_initial_commit "$upstream" \
+    ".claude/agents/dev.md" "upstream agent v1" \
+    "other.txt" "other content"
+  commit_files "$upstream" "advance agent" \
+    ".claude/agents/dev.md" "upstream agent v2"
+
+  adopter_strict="$(mktemp -d "$TMP_ROOT/adopter-strict.XXXXXX")"
+  init_git_repo "$adopter_strict"
+  printf 'canonical_repo = "%s"\n' "$upstream" > "$adopter_strict/crewrig.config.toml"
+  mkdir -p "$adopter_strict/.crewrig"
+  printf '.claude/agents\tstrict\nother.txt\tstrict\n' > "$adopter_strict/.crewrig/core-paths.txt"
+  make_initial_commit "$adopter_strict" \
+    ".claude/agents/dev.md" "upstream agent v1" \
+    "other.txt" "other content"
+
+  adopter_regen="$(mktemp -d "$TMP_ROOT/adopter-regen.XXXXXX")"
+  init_git_repo "$adopter_regen"
+  printf 'canonical_repo = "%s"\n' "$upstream" > "$adopter_regen/crewrig.config.toml"
+  mkdir -p "$adopter_regen/.crewrig"
+  printf '.claude/agents\tregenerable\nother.txt\tstrict\n' > "$adopter_regen/.crewrig/core-paths.txt"
+  make_initial_commit "$adopter_regen" \
+    ".claude/agents/dev.md" "upstream agent v1" \
+    "other.txt" "other content"
+
+  strict_exit=0
+  strict_stdout="$(cd "$adopter_strict" && CREWRIG_REPO_DIR="$adopter_strict" bash "$SCRIPT_UNDER_TEST" 2>"$TMP_ROOT/ss-strict.err")" || strict_exit=$?
+  regen_exit=0
+  regen_stdout="$(cd "$adopter_regen" && CREWRIG_REPO_DIR="$adopter_regen" bash "$SCRIPT_UNDER_TEST" 2>"$TMP_ROOT/ss-regen.err")" || regen_exit=$?
+
+  ok=1
+  if [ "$strict_exit" -ne 0 ] || [ "$regen_exit" -ne 0 ]; then
+    echo "FAIL  case-ss: expected both runs to exit 0, got strict=$strict_exit regen=$regen_exit"
+    ok=0
+  fi
+  if ! diff -r "$adopter_strict/.claude" "$adopter_regen/.claude" >/dev/null 2>&1; then
+    echo "FAIL  case-ss: .claude trees diverged between the strict and regenerable runs"
+    ok=0
+  fi
+  if [ "$(cat "$adopter_strict/other.txt" 2>/dev/null)" != "$(cat "$adopter_regen/other.txt" 2>/dev/null)" ]; then
+    echo "FAIL  case-ss: other.txt diverged between the two runs"
+    ok=0
+  fi
+  if [ "$strict_stdout" != "$regen_stdout" ]; then
+    echo "FAIL  case-ss: stdout diverged between the two runs"
+    echo "      strict: $strict_stdout"
+    echo "      regen:  $regen_stdout"
+    ok=0
+  fi
+  if ! diff -q "$TMP_ROOT/ss-strict.err" "$TMP_ROOT/ss-regen.err" >/dev/null 2>&1; then
+    echo "FAIL  case-ss: stderr diverged between the two runs"
+    ok=0
+  fi
+  if [ "$ok" -eq 1 ]; then
+    echo "PASS  case-ss: a fork with no divergence is unaffected — strict and regenerable runs produce byte-identical trees and streams"
+    pass=$((pass + 1))
+  else
+    fail=$((fail + 1))
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Case tt — spec 0199 R49: --preserve-history treats a `regenerable` entry as
+# governed (does not block the graft on an uncommitted change there) while
+# an unlisted path still blocks it, exactly as case w already proves for
+# strict/adopt-on-edit.
+# ---------------------------------------------------------------------------
+{
+  upstream="$(mktemp -d "$TMP_ROOT/upstream.XXXXXX")"
+  init_git_repo "$upstream"
+  make_initial_commit "$upstream" ".claude/agents/dev.md" "upstream agent"
+
+  # crewrig.config.toml and .crewrig/core-paths.txt are committed via a
+  # direct `add -A` (not make_initial_commit, which stages only the file
+  # names passed to it) so the adopter's tree differs from upstream's own —
+  # otherwise a commit whose only tracked content byte-matches upstream's
+  # single file can hash identically to it, tripping the R11 no-op
+  # short-circuit before the anti-pollution guard this case exists to reach.
+  adopter="$(mktemp -d "$TMP_ROOT/adopter.XXXXXX")"
+  init_git_repo "$adopter"
+  printf 'canonical_repo = "%s"\n' "$upstream" > "$adopter/crewrig.config.toml"
+  mkdir -p "$adopter/.crewrig"
+  printf '.claude/agents\tregenerable\n' > "$adopter/.crewrig/core-paths.txt"
+  mkdir -p "$adopter/.claude/agents"
+  printf 'upstream agent\n' > "$adopter/.claude/agents/dev.md"
+  git -C "$adopter" add -A
+  git -C "$adopter" commit -q -m initial
+  printf 'regenerated locally, uncommitted\n' > "$adopter/.claude/agents/dev.md"
+
+  actual_exit=0
+  ( cd "$adopter" && CREWRIG_REPO_DIR="$adopter" bash "$SCRIPT_UNDER_TEST" --preserve-history >/dev/null 2>&1 ) || actual_exit=$?
+  if [ "$actual_exit" -eq 0 ]; then
+    echo "PASS  case-tt-1: an uncommitted change under a regenerable entry does not block --preserve-history"
+    pass=$((pass + 1))
+  else
+    echo "FAIL  case-tt-1: expected exit 0, got $actual_exit"
+    fail=$((fail + 1))
+  fi
+
+  adopter2="$(mktemp -d "$TMP_ROOT/adopter2.XXXXXX")"
+  init_git_repo "$adopter2"
+  printf 'canonical_repo = "%s"\n' "$upstream" > "$adopter2/crewrig.config.toml"
+  mkdir -p "$adopter2/.crewrig"
+  printf '.claude/agents\tregenerable\n' > "$adopter2/.crewrig/core-paths.txt"
+  mkdir -p "$adopter2/.claude/agents"
+  printf 'upstream agent\n' > "$adopter2/.claude/agents/dev.md"
+  git -C "$adopter2" add -A
+  git -C "$adopter2" commit -q -m initial
+  printf 'ungoverned local edit\n' > "$adopter2/notes.md"
+
+  actual_exit2=0
+  stderr2="$(cd "$adopter2" && CREWRIG_REPO_DIR="$adopter2" bash "$SCRIPT_UNDER_TEST" --preserve-history 2>&1 >/dev/null)" || actual_exit2=$?
+  if [ "$actual_exit2" -eq 1 ] && echo "$stderr2" | grep -qF "notes.md"; then
+    echo "PASS  case-tt-2: an uncommitted change outside the governed set still blocks --preserve-history"
+    pass=$((pass + 1))
+  else
+    echo "FAIL  case-tt-2: expected exit 1 naming notes.md, got exit $actual_exit2"
+    echo "      stderr: $stderr2"
+    fail=$((fail + 1))
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Case uu — Decision 6: the spec-0064 orphan cleanup still runs under
+# `regenerable`, exactly as it already runs under `strict` (case r).
+# ---------------------------------------------------------------------------
+{
+  upstream="$(mktemp -d "$TMP_ROOT/upstream.XXXXXX")"
+  init_git_repo "$upstream"
+  make_initial_commit "$upstream" \
+    ".claude/agents/active/AGENT.md" "active content" \
+    ".claude/agents/old/AGENT.md" "old content"
+  git -C "$upstream" rm -q -r ".claude/agents/old"
+  git -C "$upstream" commit -q -m "remove old agent"
+
+  adopter="$(mktemp -d "$TMP_ROOT/adopter.XXXXXX")"
+  init_git_repo "$adopter"
+  printf 'canonical_repo = "%s"\n' "$upstream" > "$adopter/crewrig.config.toml"
+  mkdir -p "$adopter/.crewrig"
+  printf '.claude/agents\tregenerable\n' > "$adopter/.crewrig/core-paths.txt"
+  make_initial_commit "$adopter" \
+    ".claude/agents/active/AGENT.md" "active content" \
+    ".claude/agents/old/AGENT.md" "old content"
+
+  actual_exit=0
+  stdout_out="$(cd "$adopter" && CREWRIG_REPO_DIR="$adopter" bash "$SCRIPT_UNDER_TEST" 2>/dev/null)" || actual_exit=$?
+
+  ok=1
+  if [ "$actual_exit" -ne 0 ]; then
+    echo "FAIL  case-uu: expected exit 0, got $actual_exit"
+    ok=0
+  fi
+  if [ -f "$adopter/.claude/agents/old/AGENT.md" ]; then
+    echo "FAIL  case-uu: orphaned agent output was not removed"
+    ok=0
+  fi
+  if ! echo "$stdout_out" | grep -qF "Removed (upstream-deleted): .claude/agents/old/AGENT.md"; then
+    echo "FAIL  case-uu: missing 'Removed (upstream-deleted)' report line"
+    ok=0
+  fi
+  if [ ! -f "$adopter/.claude/agents/active/AGENT.md" ]; then
+    echo "FAIL  case-uu: active agent output incorrectly removed"
+    ok=0
+  fi
+  if [ "$ok" -eq 1 ]; then
+    echo "PASS  case-uu: orphan cleanup still runs under regenerable, active member preserved"
+    pass=$((pass + 1))
+  else
+    fail=$((fail + 1))
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Case ww — spec 0201: a fork lands on the new flat compiled-agent layout
+# without acting. Upstream ships both agents flat; the adopter's tree still
+# holds the retired nested `.claude/agents/dev/AGENT.md` (never migrated) and
+# a locally diverged flat `.claude/agents/tester.md`. The sync must not
+# abort: `dev.md` is restored fresh, the retired `dev/AGENT.md` is removed as
+# an upstream-deleted orphan, and the diverged `tester.md` is restored and
+# reported rather than silently overwritten.
+# ---------------------------------------------------------------------------
+{
+  upstream="$(mktemp -d "$TMP_ROOT/upstream.XXXXXX")"
+  init_git_repo "$upstream"
+  make_initial_commit "$upstream" \
+    ".claude/agents/dev.md" "upstream dev content" \
+    ".claude/agents/tester.md" "upstream tester content"
+
+  adopter="$(mktemp -d "$TMP_ROOT/adopter.XXXXXX")"
+  init_git_repo "$adopter"
+  printf 'canonical_repo = "%s"\n' "$upstream" > "$adopter/crewrig.config.toml"
+  mkdir -p "$adopter/.crewrig"
+  printf '.claude/agents\tregenerable\n' > "$adopter/.crewrig/core-paths.txt"
+  make_initial_commit "$adopter" \
+    ".claude/agents/dev/AGENT.md" "retired nested dev content" \
+    ".claude/agents/tester.md" "upstream tester content"
+  # Diverge the flat tester output locally, uncommitted — same shape as case qq.
+  printf 'locally diverged tester content\n' > "$adopter/.claude/agents/tester.md"
+
+  actual_exit=0
+  stdout_out="$(cd "$adopter" && CREWRIG_REPO_DIR="$adopter" bash "$SCRIPT_UNDER_TEST" 2>/dev/null)" || actual_exit=$?
+
+  ok=1
+  if [ "$actual_exit" -ne 0 ]; then
+    echo "FAIL  case-ww: expected exit 0, got $actual_exit"
+    ok=0
+  fi
+  restored_dev="$(cat "$adopter/.claude/agents/dev.md" 2>/dev/null)"
+  if [ "$restored_dev" != "upstream dev content" ]; then
+    echo "FAIL  case-ww: dev.md was not restored from upstream (got '$restored_dev')"
+    ok=0
+  fi
+  if [ -f "$adopter/.claude/agents/dev/AGENT.md" ]; then
+    echo "FAIL  case-ww: retired nested .claude/agents/dev/AGENT.md was not removed"
+    ok=0
+  fi
+  # A leftover empty .claude/agents/dev/ directory is expected residue (no
+  # empty-directory pruning in sync-from-upstream.sh — see spec 0201 PLAN v2
+  # *Risks*), not asserted here.
+  if ! echo "$stdout_out" | grep -qF "Removed (upstream-deleted): .claude/agents/dev/AGENT.md"; then
+    echo "FAIL  case-ww: missing 'Removed (upstream-deleted)' report line for the retired nested output"
+    echo "      actual stdout: $stdout_out"
+    ok=0
+  fi
+  restored_tester="$(cat "$adopter/.claude/agents/tester.md" 2>/dev/null)"
+  if [ "$restored_tester" != "upstream tester content" ]; then
+    echo "FAIL  case-ww: diverged tester.md was not restored from upstream (got '$restored_tester')"
+    ok=0
+  fi
+  if ! echo "$stdout_out" | grep -qF "Restored (diverged, regenerable): .claude/agents/tester.md"; then
+    echo "FAIL  case-ww: missing 'Restored (diverged, regenerable)' report line for tester.md"
+    echo "      actual stdout: $stdout_out"
+    ok=0
+  fi
+  if [ "$ok" -eq 1 ]; then
+    echo "PASS  case-ww: a fork lands on the new flat layout without acting — retired nested output removed, diverged flat output restored and reported"
+    pass=$((pass + 1))
+  else
+    fail=$((fail + 1))
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Case vv — spec 0199 R5: an org channel file nested under the still-`strict`
+# `model-mappings` parent is neither restored nor able to abort the sync.
+# ---------------------------------------------------------------------------
+{
+  upstream="$(mktemp -d "$TMP_ROOT/upstream.XXXXXX")"
+  init_git_repo "$upstream"
+  make_initial_commit "$upstream" \
+    "model-mappings/claude.yml" "upstream core content"
+
+  adopter="$(mktemp -d "$TMP_ROOT/adopter.XXXXXX")"
+  init_git_repo "$adopter"
+  printf 'canonical_repo = "%s"\n' "$upstream" > "$adopter/crewrig.config.toml"
+  mkdir -p "$adopter/.crewrig"
+  printf 'model-mappings\tstrict\nmodel-mappings/claude.org.yml\texcluded\n' \
+    > "$adopter/.crewrig/core-paths.txt"
+  make_initial_commit "$adopter" \
+    "model-mappings/claude.yml" "upstream core content" \
+    "model-mappings/claude.org.yml" "ORG ONLY override content"
+  printf 'ORG customised override\n' > "$adopter/model-mappings/claude.org.yml"
+
+  run_case "case-vv org channel file under the strict model-mappings parent does not abort" "$adopter" 0
+
+  org_after="$(cat "$adopter/model-mappings/claude.org.yml" 2>/dev/null)"
+  if [ "$org_after" = "ORG customised override" ]; then
+    echo "PASS  case-vv: org channel file left untouched (not restored)"
+    pass=$((pass + 1))
+  else
+    echo "FAIL  case-vv: org channel file was modified: '$org_after'"
+    fail=$((fail + 1))
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Case xx — spec 0204 R1, R2: active organization-owned compiled skill
+# under strict compiled directory is preserved across sync and no removal
+# notice is emitted.
+# ---------------------------------------------------------------------------
+{
+  upstream="$(mktemp -d "$TMP_ROOT/upstream.XXXXXX")"
+  init_git_repo "$upstream"
+  make_initial_commit "$upstream" \
+    ".claude/skills/developer/SKILL.md" "upstream developer skill content"
+
+  adopter="$(mktemp -d "$TMP_ROOT/adopter.XXXXXX")"
+  init_git_repo "$adopter"
+  printf 'canonical_repo = "%s"\n' "$upstream" > "$adopter/crewrig.config.toml"
+  mkdir -p "$adopter/.crewrig" "$adopter/artifacts/org/skills/org-helper"
+  printf '.claude/skills\tstrict\n' > "$adopter/.crewrig/core-paths.txt"
+  make_initial_commit "$adopter" \
+    ".claude/skills/developer/SKILL.md" "upstream developer skill content" \
+    "artifacts/org/skills/org-helper/SKILL.md" "org helper source" \
+    ".claude/skills/org-helper/SKILL.md" "org helper compiled output"
+
+  actual_exit=0
+  stdout_out="$(cd "$adopter" && CREWRIG_REPO_DIR="$adopter" bash "$SCRIPT_UNDER_TEST" 2>/dev/null)" || actual_exit=$?
+
+  ok=1
+  if [ "$actual_exit" -ne 0 ]; then
+    echo "FAIL  case-xx: expected exit 0, got $actual_exit"
+    ok=0
+  fi
+  if [ ! -f "$adopter/.claude/skills/org-helper/SKILL.md" ]; then
+    echo "FAIL  case-xx: org skill was removed by sync"
+    ok=0
+  fi
+  if echo "$stdout_out" | grep -qF "Removed (upstream-deleted): .claude/skills/org-helper/SKILL.md"; then
+    echo "FAIL  case-xx: removal notice emitted for preserved org skill"
+    ok=0
+  fi
+  if [ ! -f "$adopter/.claude/skills/developer/SKILL.md" ]; then
+    echo "FAIL  case-xx: active upstream skill was removed"
+    ok=0
+  fi
+  if [ "$ok" -eq 1 ]; then
+    echo "PASS  case-xx: active org-owned compiled skill preserved across sync"
+    pass=$((pass + 1))
+  else
+    fail=$((fail + 1))
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Case yy — spec 0204 R1, R2: active organization-owned compiled command
+# under strict compiled directory is preserved across sync.
+# ---------------------------------------------------------------------------
+{
+  upstream="$(mktemp -d "$TMP_ROOT/upstream.XXXXXX")"
+  init_git_repo "$upstream"
+  make_initial_commit "$upstream" \
+    ".gemini/commands/core-cmd.toml" "upstream core command"
+
+  adopter="$(mktemp -d "$TMP_ROOT/adopter.XXXXXX")"
+  init_git_repo "$adopter"
+  printf 'canonical_repo = "%s"\n' "$upstream" > "$adopter/crewrig.config.toml"
+  mkdir -p "$adopter/.crewrig" "$adopter/artifacts/org/commands"
+  printf '.gemini/commands\tstrict\n' > "$adopter/.crewrig/core-paths.txt"
+  make_initial_commit "$adopter" \
+    ".gemini/commands/core-cmd.toml" "upstream core command" \
+    "artifacts/org/commands/org-cmd.md" "org command source" \
+    ".gemini/commands/org-cmd.toml" "org command compiled output"
+
+  actual_exit=0
+  stdout_out="$(cd "$adopter" && CREWRIG_REPO_DIR="$adopter" bash "$SCRIPT_UNDER_TEST" 2>/dev/null)" || actual_exit=$?
+
+  ok=1
+  if [ "$actual_exit" -ne 0 ]; then
+    echo "FAIL  case-yy: expected exit 0, got $actual_exit"
+    ok=0
+  fi
+  if [ ! -f "$adopter/.gemini/commands/org-cmd.toml" ]; then
+    echo "FAIL  case-yy: org command was removed by sync"
+    ok=0
+  fi
+  if echo "$stdout_out" | grep -qF "Removed (upstream-deleted): .gemini/commands/org-cmd.toml"; then
+    echo "FAIL  case-yy: removal notice emitted for preserved org command"
+    ok=0
+  fi
+  if [ "$ok" -eq 1 ]; then
+    echo "PASS  case-yy: active org-owned compiled command preserved across sync"
+    pass=$((pass + 1))
+  else
+    fail=$((fail + 1))
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Case zz — spec 0204 R3: upstream-deleted core skill is removed by orphan cleanup.
+# ---------------------------------------------------------------------------
+{
+  upstream="$(mktemp -d "$TMP_ROOT/upstream.XXXXXX")"
+  init_git_repo "$upstream"
+  make_initial_commit "$upstream" \
+    ".claude/skills/active-core/SKILL.md" "active core content" \
+    ".claude/skills/retired-core/SKILL.md" "retired core content"
+  git -C "$upstream" rm -q -r ".claude/skills/retired-core"
+  git -C "$upstream" commit -q -m "remove retired core skill"
+
+  adopter="$(mktemp -d "$TMP_ROOT/adopter.XXXXXX")"
+  init_git_repo "$adopter"
+  printf 'canonical_repo = "%s"\n' "$upstream" > "$adopter/crewrig.config.toml"
+  mkdir -p "$adopter/.crewrig"
+  printf '.claude/skills\tstrict\n' > "$adopter/.crewrig/core-paths.txt"
+  make_initial_commit "$adopter" \
+    ".claude/skills/active-core/SKILL.md" "active core content" \
+    ".claude/skills/retired-core/SKILL.md" "retired core content"
+
+  actual_exit=0
+  stdout_out="$(cd "$adopter" && CREWRIG_REPO_DIR="$adopter" bash "$SCRIPT_UNDER_TEST" 2>/dev/null)" || actual_exit=$?
+
+  ok=1
+  if [ "$actual_exit" -ne 0 ]; then
+    echo "FAIL  case-zz: expected exit 0, got $actual_exit"
+    ok=0
+  fi
+  if [ -f "$adopter/.claude/skills/retired-core/SKILL.md" ]; then
+    echo "FAIL  case-zz: upstream-deleted core skill was not removed"
+    ok=0
+  fi
+  if ! echo "$stdout_out" | grep -qF "Removed (upstream-deleted): .claude/skills/retired-core/SKILL.md"; then
+    echo "FAIL  case-zz: missing 'Removed (upstream-deleted)' report line for core skill"
+    ok=0
+  fi
+  if [ ! -f "$adopter/.claude/skills/active-core/SKILL.md" ]; then
+    echo "FAIL  case-zz: active core skill was incorrectly removed"
+    ok=0
+  fi
+  if [ "$ok" -eq 1 ]; then
+    echo "PASS  case-zz: upstream-deleted core skill is removed by orphan cleanup"
+    pass=$((pass + 1))
+  else
+    fail=$((fail + 1))
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Case aaa — spec 0204 R4: retired organization skill is cleaned up as an
+# orphan when its definition under artifacts/org/ is removed.
+# ---------------------------------------------------------------------------
+{
+  upstream="$(mktemp -d "$TMP_ROOT/upstream.XXXXXX")"
+  init_git_repo "$upstream"
+  make_initial_commit "$upstream" \
+    ".claude/skills/active-core/SKILL.md" "active core content"
+
+  adopter="$(mktemp -d "$TMP_ROOT/adopter.XXXXXX")"
+  init_git_repo "$adopter"
+  printf 'canonical_repo = "%s"\n' "$upstream" > "$adopter/crewrig.config.toml"
+  mkdir -p "$adopter/.crewrig" "$adopter/artifacts/org/skills"
+  printf '.claude/skills\tstrict\n' > "$adopter/.crewrig/core-paths.txt"
+  # Adopter has a tracked compiled skill, but no corresponding source in artifacts/org/skills/
+  make_initial_commit "$adopter" \
+    ".claude/skills/active-core/SKILL.md" "active core content" \
+    ".claude/skills/retired-org/SKILL.md" "stale compiled output with no source"
+
+  actual_exit=0
+  stdout_out="$(cd "$adopter" && CREWRIG_REPO_DIR="$adopter" bash "$SCRIPT_UNDER_TEST" 2>/dev/null)" || actual_exit=$?
+
+  ok=1
+  if [ "$actual_exit" -ne 0 ]; then
+    echo "FAIL  case-aaa: expected exit 0, got $actual_exit"
+    ok=0
+  fi
+  if [ -f "$adopter/.claude/skills/retired-org/SKILL.md" ]; then
+    echo "FAIL  case-aaa: retired org skill was not removed"
+    ok=0
+  fi
+  if ! echo "$stdout_out" | grep -qF "Removed (upstream-deleted): .claude/skills/retired-org/SKILL.md"; then
+    echo "FAIL  case-aaa: missing 'Removed (upstream-deleted)' report line for retired org skill"
+    ok=0
+  fi
+  if [ "$ok" -eq 1 ]; then
+    echo "PASS  case-aaa: retired organization skill is cleaned up as orphan"
+    pass=$((pass + 1))
+  else
+    fail=$((fail + 1))
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Case bbb — issue #1213: `ci/org/` is an `excluded` entry nested under the
+# strict `ci` parent (same pattern as case s for `specs/org` under `specs`).
+# An adopter's org-owned CI overlay file under `ci/org/` — absent from
+# FETCH_HEAD, since upstream never ships adopter content — must survive both
+# the strict dirty guard AND the spec-0064 orphan-cleanup deletion pass.
+#
+# Before the fix (manifest carries `ci	strict` with no nested `ci/org
+# excluded` line), the orphan-cleanup pass in the apply loop deletes
+# ci/org/gitlab-ci.custom.yml and reports it on stdout as
+# "Removed (upstream-deleted)" — the sync does not abort, it silently erases
+# the adopter's overlay. This case pins the FIXED manifest shape.
+# ---------------------------------------------------------------------------
+{
+  upstream="$(mktemp -d "$TMP_ROOT/upstream.XXXXXX")"
+  init_git_repo "$upstream"
+  make_initial_commit "$upstream" \
+    "ci/ci-capabilities.yml" "upstream CI capability reference"
+
+  adopter="$(mktemp -d "$TMP_ROOT/adopter.XXXXXX")"
+  init_git_repo "$adopter"
+  printf 'canonical_repo = "%s"\n' "$upstream" > "$adopter/crewrig.config.toml"
+  mkdir -p "$adopter/.crewrig"
+  printf 'ci\tstrict\nci/org\texcluded\n' > "$adopter/.crewrig/core-paths.txt"
+  make_initial_commit "$adopter" \
+    "ci/ci-capabilities.yml" "upstream CI capability reference" \
+    "ci/org/gitlab-ci.custom.yml" "org-owned CI overlay content"
+
+  actual_exit=0
+  stdout_out="$(cd "$adopter" && CREWRIG_REPO_DIR="$adopter" bash "$SCRIPT_UNDER_TEST" 2>/dev/null)" || actual_exit=$?
+
+  ok=1
+  if [ "$actual_exit" -ne 0 ]; then
+    echo "FAIL  case-bbb: expected exit 0, got $actual_exit"
+    ok=0
+  fi
+  if [ ! -f "$adopter/ci/org/gitlab-ci.custom.yml" ]; then
+    echo "FAIL  case-bbb: excluded child ci/org/gitlab-ci.custom.yml was incorrectly deleted"
+    ok=0
+  fi
+  if [ -f "$adopter/ci/org/gitlab-ci.custom.yml" ] && \
+     [ "$(cat "$adopter/ci/org/gitlab-ci.custom.yml")" != "org-owned CI overlay content" ]; then
+    echo "FAIL  case-bbb: ci/org/gitlab-ci.custom.yml content was modified"
+    ok=0
+  fi
+  if echo "$stdout_out" | grep -qF "Removed (upstream-deleted): ci/org"; then
+    echo "FAIL  case-bbb: stdout contained unexpected 'Removed' line for excluded ci/org path"
+    echo "      actual stdout: $stdout_out"
+    ok=0
+  fi
+  if [ "$ok" -eq 1 ]; then
+    echo "PASS  case-bbb: excluded ci/org child not deleted by strict-ci orphan cleanup"
+    pass=$((pass + 1))
+  else
     fail=$((fail + 1))
   fi
 }

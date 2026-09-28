@@ -56,7 +56,7 @@ assert_eq() {
 
 assert_contains() {
   local name="$1" haystack="$2" needle="$3"
-  if printf '%s' "$haystack" | grep -qF "$needle"; then
+  if grep -qF -- "$needle" <<< "$haystack"; then
     echo "PASS  $name"
     pass=$((pass + 1))
   else
@@ -269,6 +269,73 @@ run_in "$tl"
 assert_eq "Case L0 — generate with env mapping succeeds" 0 "$RC"
 l_out="$(cat "$tl/.gitlab-ci.yml")"
 assert_contains "Case L1 — generated job contains env variable under variables" "$l_out" 'BASE_REF: "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"'
+
+# Case M (spec 0234) — a rejected capability leaves an existing .gitlab-ci.yml byte-identical.
+tm="$(new_tree)"
+cat > "$tm/ci/ci-capabilities.yml" <<'YML'
+capabilities:
+  - id: build
+    name: "Build"
+    trigger:
+      - on: push
+        branches: [main]
+    portability: portable
+    requires:
+      runtime: node@22
+    command:
+      - npm install
+YML
+run_in "$tm"
+assert_eq "Case M0 — initial valid generation succeeds" 0 "$RC"
+initial_content="$(cat "$tm/.gitlab-ci.yml")"
+
+cat > "$tm/ci/ci-capabilities.yml" <<'YML'
+capabilities:
+  - id: broken
+    name: "Broken"
+    trigger:
+      - on: push
+        branches: [main]
+    portability: portable
+    requires:
+      tools: [nonexistent-tool]
+    command:
+      - nonexistent-tool --run
+YML
+run_in "$tm"
+assert_eq "Case M1 — generation fails on invalid capability" 1 "$RC"
+after_fail_content="$(cat "$tm/.gitlab-ci.yml")"
+assert_eq "Case M2 — existing .gitlab-ci.yml remains byte-identical after failure" "$initial_content" "$after_fail_content"
+tmp_files_left="$(find "$tm" -name '.gitlab-ci.yml.tmp.*' | wc -l | tr -d ' ')"
+assert_eq "Case M3 — temporary files are cleaned up on failure" "0" "$tmp_files_left"
+
+# Case N (spec 0236) — manual capability jobs emit valid rule syntax without empty `if: ''`.
+tn="$(new_tree)"
+cat > "$tn/ci/ci-capabilities.yml" <<'YML'
+capabilities:
+  - id: manual-job
+    name: "Manual Job"
+    trigger:
+      - on: manual
+    portability: portable
+    command:
+      - echo "manual"
+  - id: manual-with-branch
+    name: "Manual Job with Branch"
+    trigger:
+      - on: manual
+        branches: [main]
+    portability: portable
+    command:
+      - echo "manual branch"
+YML
+run_in "$tn"
+assert_eq "Case N0 — manual capability generation succeeds" 0 "$RC"
+n_out="$(cat "$tn/.gitlab-ci.yml")"
+assert_contains "Case N1 — manual trigger without condition emits '- when: manual'" "$n_out" "- when: manual"
+assert_contains "Case N2 — manual trigger with branch retains condition" "$n_out" "CI_COMMIT_BRANCH =~ /^main$/"
+empty_if_count="$(grep -E -c "if: *['\"]{2}" "$tn/.gitlab-ci.yml" || true)"
+assert_eq "Case N3 — no empty if expressions emitted" "0" "$empty_if_count"
 
 # -------------------------------------------------------------------------
 echo ""

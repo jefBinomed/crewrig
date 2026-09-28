@@ -56,21 +56,29 @@ capabilities:
         paths:
           - "scripts/build-components.sh"
           - "scripts/test-build-components.sh"
+          - "scripts/tests/test-model-resolution.sh"
+          - "scripts/tests/test-agent-profile-migration.sh"
           - "scripts/lib/**"
           - "artifacts/**"
           - "extensions/**"
           - ".crewrig/core-paths.txt"
           - "docs/layers.md"
+          - "docs/agent-profile-migration.md"
+          - "model-mappings/**"
       - on: push
         branches: [main, "release/**"]
         paths:
           - "scripts/build-components.sh"
           - "scripts/test-build-components.sh"
+          - "scripts/tests/test-model-resolution.sh"
+          - "scripts/tests/test-agent-profile-migration.sh"
           - "scripts/lib/**"
           - "artifacts/**"
           - "extensions/**"
           - ".crewrig/core-paths.txt"
           - "docs/layers.md"
+          - "docs/agent-profile-migration.md"
+          - "model-mappings/**"
     portability: portable
     changeset-gated: true
     requires:
@@ -79,14 +87,20 @@ capabilities:
       files:
         - "scripts/build-components.sh"
         - "scripts/test-build-components.sh"
+        - "scripts/tests/test-model-resolution.sh"
+        - "scripts/tests/test-agent-profile-migration.sh"
         - "scripts/lib/**"
         - "artifacts/**"
         - "extensions/**"
         - ".crewrig/core-paths.txt"
+        - "docs/agent-profile-migration.md"
+        - "model-mappings/**"
       env: []
     command:
       - bash scripts/build-components.sh --target all --check
       - bash scripts/test-build-components.sh
+      - bash scripts/tests/test-model-resolution.sh
+      - bash scripts/tests/test-agent-profile-migration.sh
 
   - id: extension-render
     name: "Enforce no committed generated extension output, a fresh render, and the declared file set"
@@ -220,6 +234,8 @@ capabilities:
         branches: [main, "release/**"]
         paths:
           - "scripts/check-extension-manifest-version.sh"
+          - "scripts/check-extension-version-bump.sh"
+          - "scripts/lib/base-ref-resolve.sh"
           - "scripts/tests/test-check-extension-manifest-version.sh"
           - "scripts/tests/test-check-extension-version-bump.sh"
           - "extensions/**"
@@ -228,6 +244,8 @@ capabilities:
         branches: [main, "release/**"]
         paths:
           - "scripts/check-extension-manifest-version.sh"
+          - "scripts/check-extension-version-bump.sh"
+          - "scripts/lib/base-ref-resolve.sh"
           - "scripts/tests/test-check-extension-manifest-version.sh"
           - "scripts/tests/test-check-extension-version-bump.sh"
           - "extensions/**"
@@ -285,18 +303,22 @@ capabilities:
         branches: [main, "release/**"]
         paths:
           - "scripts/check-core-paths.sh"
+          - "scripts/sync-from-upstream.sh"
           - "scripts/tests/test-check-core-paths.sh"
           - "scripts/tests/test-sync-from-upstream.sh"
           - ".crewrig/core-paths.txt"
           - "docs/layers.md"
+          - "model-mappings/**"
       - on: push
         branches: [main, "release/**"]
         paths:
           - "scripts/check-core-paths.sh"
+          - "scripts/sync-from-upstream.sh"
           - "scripts/tests/test-check-core-paths.sh"
           - "scripts/tests/test-sync-from-upstream.sh"
           - ".crewrig/core-paths.txt"
           - "docs/layers.md"
+          - "model-mappings/**"
     portability: portable
     changeset-gated: true
     requires:
@@ -590,11 +612,15 @@ capabilities:
         paths:
           - "scripts/tests/test-e2e-*.sh"
           - "tests/e2e/**"
+          - "scripts/e2e/**"
+          - "docs/cli-matrix.md"
       - on: push
         branches: [main, "release/**"]
         paths:
           - "scripts/tests/test-e2e-*.sh"
           - "tests/e2e/**"
+          - "scripts/e2e/**"
+          - "docs/cli-matrix.md"
       - on: manual
     portability: portable
     changeset-gated: true
@@ -614,6 +640,7 @@ capabilities:
       - bash scripts/tests/test-e2e-judge-config.sh
       - bash scripts/tests/test-e2e-libs-readme.sh
       - bash scripts/tests/test-e2e-llm-judge-lib.sh
+      - bash scripts/tests/test-e2e-probes.sh
       - bash scripts/tests/test-e2e-readme.sh
       - bash scripts/tests/test-e2e-report.sh
       - bash scripts/tests/test-e2e-runner-delegation.sh
@@ -646,16 +673,19 @@ capabilities:
     portability: portable
     changeset-gated: true
     requires:
-      tools: [yq]
+      tools: [jq, yq]
     command:
       - bash scripts/tests/test-setup-validation-backend.sh
       - bash scripts/tests/test-tls-delegation.sh
       - bash scripts/tests/test-setup-mcp-merge.sh
+      - bash scripts/tests/test-setup-mempalace-rc-guard.sh
       - bash scripts/tests/test-setup-org-mcp.sh
+      - bash scripts/tests/test-setup-mcp-fold-secrets-argv.sh
       - bash scripts/tests/test-setup-catalogue-picker.sh
       - bash scripts/tests/test-setup-ensure-tier-built.sh
       - bash scripts/tests/test-setup-gemini-md-cleanup.sh
       - bash scripts/tests/test-setup-init-command-instructions.sh
+      - bash scripts/tests/test-setup-gemini-settings-merge.sh
 
   - id: misc
     name: "Run miscellaneous portability and reservation checks"
@@ -668,10 +698,14 @@ capabilities:
           - "scripts/check-gemini-overlay-enrollment.sh"
           - "scripts/tests/test-check-gemini-overlay-enrollment.sh"
           - "scripts/tests/test-check-bash32-portability.sh"
+          - "scripts/check-pipefail-grep.sh"
+          - "scripts/tests/test-check-pipefail-grep.sh"
           - "scripts/tests/test-reserve-spec-id.sh"
           - "scripts/tests/test-check-spec-id-reserved.sh"
           - "scripts/reserve-spec-id.sh"
           - "scripts/check-spec-id-reserved.sh"
+          - "scripts/lib/base-ref-resolve.sh"
+          - "model-mappings/**"
       - on: push
         branches: [main, "release/**"]
         paths:
@@ -680,10 +714,14 @@ capabilities:
           - "scripts/check-gemini-overlay-enrollment.sh"
           - "scripts/tests/test-check-gemini-overlay-enrollment.sh"
           - "scripts/tests/test-check-bash32-portability.sh"
+          - "scripts/check-pipefail-grep.sh"
+          - "scripts/tests/test-check-pipefail-grep.sh"
           - "scripts/tests/test-reserve-spec-id.sh"
           - "scripts/tests/test-check-spec-id-reserved.sh"
           - "scripts/reserve-spec-id.sh"
           - "scripts/check-spec-id-reserved.sh"
+          - "scripts/lib/base-ref-resolve.sh"
+          - "model-mappings/**"
     portability: portable
     changeset-gated: true
     requires:
@@ -694,6 +732,7 @@ capabilities:
       - bash scripts/check-gemini-overlay-enrollment.sh
       - bash scripts/tests/test-check-gemini-overlay-enrollment.sh
       - bash scripts/tests/test-check-bash32-portability.sh
+      - bash scripts/tests/test-check-pipefail-grep.sh
       - bash scripts/tests/test-reserve-spec-id.sh
       - bash scripts/tests/test-check-spec-id-reserved.sh
 
@@ -704,6 +743,7 @@ capabilities:
         branches: [main, "release/**"]
         paths:
           - "scripts/tests/test-extract-frontmatter.sh"
+          - "scripts/check-skill-versions.sh"
           - "scripts/tests/test-check-skill-versions.sh"
           - "scripts/tests/test-check-feedback-routing.sh"
           - "scripts/tests/test-assembly-verification.sh"
@@ -716,6 +756,7 @@ capabilities:
         branches: [main, "release/**"]
         paths:
           - "scripts/tests/test-extract-frontmatter.sh"
+          - "scripts/check-skill-versions.sh"
           - "scripts/tests/test-check-skill-versions.sh"
           - "scripts/tests/test-check-feedback-routing.sh"
           - "scripts/tests/test-assembly-verification.sh"
@@ -736,6 +777,100 @@ capabilities:
       - bash scripts/tests/test-artifact-build-install-scope.sh
       - bash scripts/tests/test-component-tier-resolution.sh
       - bash scripts/tests/test-pr-logbook-label-scope.sh
+
+  - id: check-model-mappings
+    name: "Check model-mapping conformance and run its mutation test suite"
+    trigger:
+      - on: pull-request
+        branches: [main, "release/**"]
+        paths:
+          - "model-mappings/**"
+          - "docs/model-mapping-format.md"
+          - "scripts/check-model-mappings.sh"
+          - "scripts/tests/test-check-model-mappings.sh"
+      - on: push
+        branches: [main, "release/**"]
+        paths:
+          - "model-mappings/**"
+          - "docs/model-mapping-format.md"
+          - "scripts/check-model-mappings.sh"
+          - "scripts/tests/test-check-model-mappings.sh"
+    portability: portable
+    changeset-gated: true
+    requires:
+      tools: [yq]
+    command:
+      - bash scripts/check-model-mappings.sh
+      - bash scripts/tests/test-check-model-mappings.sh
+
+  - id: check-agent-profiles
+    name: "Check agent capability-profile conformance and run its mutation test suite"
+    trigger:
+      - on: pull-request
+        branches: [main, "release/**"]
+        paths:
+          - "artifacts/**"
+          - "scripts/check-agent-profiles.sh"
+          - "scripts/tests/test-check-agent-profiles.sh"
+      - on: push
+        branches: [main, "release/**"]
+        paths:
+          - "artifacts/**"
+          - "scripts/check-agent-profiles.sh"
+          - "scripts/tests/test-check-agent-profiles.sh"
+    portability: portable
+    changeset-gated: true
+    requires:
+      tools: [yq]
+    command:
+      - bash scripts/check-agent-profiles.sh
+      - bash scripts/tests/test-check-agent-profiles.sh
+
+  - id: check-metadata-keys
+    name: "Check the component metadata: closed key set and run its mutation test suite"
+    trigger:
+      - on: pull-request
+        branches: [main, "release/**"]
+        paths:
+          - "artifacts/**"
+          - "scripts/check-component-metadata-keys.sh"
+          - "scripts/tests/test-check-component-metadata-keys.sh"
+      - on: push
+        branches: [main, "release/**"]
+        paths:
+          - "artifacts/**"
+          - "scripts/check-component-metadata-keys.sh"
+          - "scripts/tests/test-check-component-metadata-keys.sh"
+    portability: portable
+    changeset-gated: true
+    requires:
+      tools: [yq]
+    command:
+      - bash scripts/check-component-metadata-keys.sh
+      - bash scripts/tests/test-check-component-metadata-keys.sh
+
+  - id: check-claude-agent-layout
+    name: "Check the compiled Claude Code agent tree is flat and run its mutation test suite"
+    trigger:
+      - on: pull-request
+        branches: [main, "release/**"]
+        paths:
+          - ".claude/agents/**"
+          - "scripts/check-claude-agent-layout.sh"
+          - "scripts/tests/test-check-claude-agent-layout.sh"
+          - "scripts/build-components.sh"
+      - on: push
+        branches: [main, "release/**"]
+        paths:
+          - ".claude/agents/**"
+          - "scripts/check-claude-agent-layout.sh"
+          - "scripts/tests/test-check-claude-agent-layout.sh"
+          - "scripts/build-components.sh"
+    portability: portable
+    changeset-gated: true
+    command:
+      - bash scripts/check-claude-agent-layout.sh
+      - bash scripts/tests/test-check-claude-agent-layout.sh
 
   - id: markdown-links
     name: "Check relative Markdown link integrity"
@@ -800,6 +935,47 @@ capabilities:
     command:
       - npm install -g markdownlint-cli
       - markdownlint "**/*.md" --ignore node_modules --ignore extension-skeleton --ignore communication --ignore 'extensions/**/commands/*.md' --ignore 'artifacts/*/commands/*.md'
+
+  # Spec 0238 R1-R3, R13: the shell / JavaScript / Python footprint ratchet.
+  # No `paths:` filter and not changeset-gated: any change may add a shell
+  # file, so the ratchet runs on every change. Its list-growth and Python arms
+  # diff against the merge-base with BASE_REF, hence `history-depth: full`.
+  # Standard library only, so no `npm ci`.
+  - id: ratchet
+    name: "Shell, JavaScript and Python footprint ratchet"
+    trigger:
+      - on: pull-request
+        branches: [main, "release/**"]
+      - on: push
+        branches: [main, "release/**"]
+    portability: portable
+    requires:
+      runtime: node@24
+      history-depth: full
+    env:
+      BASE_REF: "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+    command:
+      - node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tests/check-ratchet.test.ts
+      - node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-ratchet.ts
+
+  # Spec 0238 R4-R8, R12, R13: type-check, erasable syntax, Oxlint type-aware
+  # strict typing (max-lines as a non-blocking warning) and Oxfmt check mode
+  # on every tracked *.ts outside the built-copy trees. No `paths:` filter: a
+  # lockfile, tsconfig.json or lint-config change must re-run it too.
+  - id: lint-typescript
+    name: "TypeScript type-check, erasable syntax, lint and format"
+    trigger:
+      - on: pull-request
+        branches: [main, "release/**"]
+      - on: push
+        branches: [main, "release/**"]
+    portability: portable
+    requires:
+      runtime: node@24
+    command:
+      - npm ci
+      - node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tests/check-erasable-syntax.test.ts scripts/tests/lint-typescript.test.ts scripts/tests/check-typescript.test.ts
+      - node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-typescript.ts
 
   # The spec linter's base-branch `status: draft` check (spec 0109 R2) resolves
   # the change's base ref, so the job needs full source history — declared as
@@ -878,15 +1054,21 @@ capabilities:
   # NO `tools:` KEY, deliberately. The generated GitLab job runs on the default
   # `debian:stable-slim` image, which ships no git, so git is installed
   # CONDITIONALLY as the first line of `command:` — a business step, not setup.
-  # Declaring `tools: [git]` instead would fail check-ci-parity.sh Arm 1 unless
-  # three coordinated edits landed (a `tool_install_lines` recipe in
-  # build-ci.sh, an `install_recipe_tool` pattern in check-ci-parity.sh, and a
-  # hand-authored GHA install step); this shape needs none of them. Note the
-  # `lint-markdown` analogy is looser than it looks: that job's inline install
-  # IS recognized by `install_recipe_tool()` and skipped as setup, whereas this
-  # git line stays a business step matching `command[0]` verbatim — which is why
-  # it must carry NO nested `sudo` (`normalize_cmd` strips only a *leading* one,
-  # so a nested `sudo` would diverge from the declared command).
+  # Declaring `tools: [git]` instead would still fail check-ci-parity.sh Arm 2
+  # (reference↔GitLab): `git`/`diff` have no `tool_install_lines` recipe in
+  # build-ci.sh, so a GitLab job needing either hard-errors at generation time.
+  # Arm 1 (GitHub Actions) no longer blocks this — since #1216, check-ci-parity.sh
+  # treats `git`/`diff` as preinstalled on ubuntu-latest, the same as `jq`, so
+  # neither an `install_recipe_tool` pattern nor a hand-authored GHA install
+  # step is needed there anymore. This shape still needs none of it — the one
+  # remaining edit to declare `tools: [git]` here would be adding that GitLab
+  # `tool_install_lines` recipe. Note the `lint-markdown` analogy is looser
+  # than it looks: that job's inline install IS recognized by
+  # `install_recipe_tool()` and skipped as setup, whereas this git line stays
+  # a business step matching
+  # `command[0]` verbatim — which is why it must carry NO nested `sudo`
+  # (`normalize_cmd` strips only a *leading* one, so a nested `sudo` would
+  # diverge from the declared command).
   - id: check-spec-id-reserved
     name: "Verify every spec id added by the change was secured"
     trigger:
@@ -967,6 +1149,7 @@ capabilities:
         fi
         echo "Rule 1 clean."
       - bash scripts/check-bash32-portability.sh
+      - bash scripts/check-pipefail-grep.sh
 
   # security-mcp.yml gates on pull_request to [main] with a path filter on the
   # MCP/dependency manifests (.github/workflows/security-mcp.yml lines 3-11).
@@ -987,6 +1170,342 @@ capabilities:
     command:
       - npm install
       - npm audit --audit-level=critical
+
+  # usage-record-schema validates the usage record contract (spec 0205).
+  # Deliberately NOT changeset-gated: the fail-safe job (ci-changeset-coverage.sh)
+  # provisions python@3.12 + yq and no Node, so a node@22 capability must never
+  # enter its execution set.
+  - id: usage-record-schema
+    name: "Validate usage record schema and fixtures"
+    trigger:
+      - on: pull-request
+        branches: [main, "release/**"]
+        paths:
+          - "schemas/**"
+          - "scripts/lib/usage-record-validator.js"
+          - "scripts/tests/test-usage-record-schema.sh"
+          - "scripts/tests/fixtures/usage-records/**"
+          - "package.json"
+          - "package-lock.json"
+      - on: push
+        branches: [main, "release/**"]
+        paths:
+          - "schemas/**"
+          - "scripts/lib/usage-record-validator.js"
+          - "scripts/tests/test-usage-record-schema.sh"
+          - "scripts/tests/fixtures/usage-records/**"
+          - "package.json"
+          - "package-lock.json"
+    portability: portable
+    requires:
+      runtime: node@22
+    command:
+      - npm install
+      - bash scripts/tests/test-usage-record-schema.sh
+
+  # release-notes renders an extension release note through the real
+  # scripts/monorepo-release.sh configuration against a hermetic fixture
+  # repository (issue #1225). Deliberately NOT changeset-gated, mirroring
+  # usage-record-schema above: the fail-safe job (ci-changeset-coverage.sh)
+  # provisions no Node.
+  - id: release-notes
+    name: "Render extension release notes through the monorepo release config"
+    trigger:
+      - on: pull-request
+        branches: [main, "release/**"]
+        paths:
+          - "scripts/monorepo-release.sh"
+          - "scripts/lib/release-notes/**"
+          - "scripts/lib/monorepo-release-lib.sh"
+          - "scripts/tests/test-monorepo-release-notes.sh"
+          - "package.json"
+          - "package-lock.json"
+      - on: push
+        branches: [main, "release/**"]
+        paths:
+          - "scripts/monorepo-release.sh"
+          - "scripts/lib/release-notes/**"
+          - "scripts/lib/monorepo-release-lib.sh"
+          - "scripts/tests/test-monorepo-release-notes.sh"
+          - "package.json"
+          - "package-lock.json"
+    portability: portable
+    requires:
+      runtime: node@22
+      tools: [jq]
+    command:
+      - npm ci
+      - bash scripts/tests/test-monorepo-release-notes.sh
+
+  # usage-capture validates the spec 0206 capture-adapter module tree and the
+  # spec 0211 per-CLI usage-capture opt-in (scripts/lib/usage-capture-optin.sh).
+  # Deliberately NOT changeset-gated, mirroring usage-record-schema above:
+  # the fail-safe job (ci-changeset-coverage.sh) provisions no Node.
+  - id: usage-capture
+    name: "Validate usage capture adapters and fixtures"
+    trigger:
+      - on: pull-request
+        branches: [main, "release/**"]
+        paths:
+          - "hooks/usage-capture.sh"
+          - "hooks/antigravity-statusline-shim.sh"
+          - "hooks/claude-transcript-hooks.json"
+          - "hooks/gemini-transcript-hooks.json"
+          - "hooks/copilot-transcript-hooks.json"
+          - "scripts/lib/usage-capture/**"
+          - "scripts/lib/usage-headless.sh"
+          - "scripts/usage-backfill.sh"
+          - "scripts/tests/test-usage-capture.sh"
+          - "scripts/tests/fixtures/usage-capture/**"
+          - "hooks/claude-usage-capture-hooks.json"
+          - "hooks/gemini-usage-capture-hooks.json"
+          - "hooks/copilot-usage-capture-hooks.json"
+          - "scripts/lib/usage-capture-optin.sh"
+          - "scripts/lib/common.sh"
+          - "scripts/setup-claude-interactive.sh"
+          - "scripts/setup-gemini-interactive.sh"
+          - "scripts/setup-copilot-interactive.sh"
+          - "scripts/tests/test-setup-usage-capture-optin.sh"
+          - "scripts/tests/fixtures/setup-usage-capture/**"
+          - "package.json"
+          - "package-lock.json"
+      - on: push
+        branches: [main, "release/**"]
+        paths:
+          - "hooks/usage-capture.sh"
+          - "hooks/antigravity-statusline-shim.sh"
+          - "hooks/claude-transcript-hooks.json"
+          - "hooks/gemini-transcript-hooks.json"
+          - "hooks/copilot-transcript-hooks.json"
+          - "scripts/lib/usage-capture/**"
+          - "scripts/lib/usage-headless.sh"
+          - "scripts/usage-backfill.sh"
+          - "scripts/tests/test-usage-capture.sh"
+          - "scripts/tests/fixtures/usage-capture/**"
+          - "hooks/claude-usage-capture-hooks.json"
+          - "hooks/gemini-usage-capture-hooks.json"
+          - "hooks/copilot-usage-capture-hooks.json"
+          - "scripts/lib/usage-capture-optin.sh"
+          - "scripts/lib/common.sh"
+          - "scripts/setup-claude-interactive.sh"
+          - "scripts/setup-gemini-interactive.sh"
+          - "scripts/setup-copilot-interactive.sh"
+          - "scripts/tests/test-setup-usage-capture-optin.sh"
+          - "scripts/tests/fixtures/setup-usage-capture/**"
+          - "package.json"
+          - "package-lock.json"
+    portability: portable
+    requires:
+      runtime: node@22
+    command:
+      - npm install
+      - bash scripts/tests/test-usage-capture.sh
+      - bash scripts/tests/test-setup-usage-capture-optin.sh
+
+  # usage-storage validates the usage-record storage contract (spec 0207):
+  # the journal write path, the wing derivation, the drain/sweep, the mirror
+  # gating and catch-up against a fake daemon, and the ajv-precompiled
+  # standalone validator's own drift gate. Deliberately NOT changeset-gated,
+  # for the same reason usage-record-schema above is not — a node@22
+  # capability must never enter the fail-safe job's python-only execution
+  # set.
+  - id: usage-storage
+    name: "Validate the usage-record storage contract"
+    trigger:
+      - on: pull-request
+        branches: [main, "release/**"]
+        paths:
+          - "scripts/lib/usage-store/**"
+          - "scripts/usage-query.sh"
+          - "scripts/usage-prune.sh"
+          - "scripts/usage-mirror.sh"
+          - "scripts/usage-drain.sh"
+          - "scripts/usage-task.sh"
+          - "scripts/usage-attribute.sh"
+          - "scripts/usage-backfill.sh"
+          - "scripts/build-usage-validator.js"
+          - "scripts/tests/test-usage-storage*.sh"
+          - "scripts/tests/fixtures/usage-storage/**"
+          - "schemas/**"
+          - "package.json"
+          - "package-lock.json"
+          - "docs/usage-storage.md"
+          - "docs/usage-organization.md"
+      - on: push
+        branches: [main, "release/**"]
+        paths:
+          - "scripts/lib/usage-store/**"
+          - "scripts/usage-query.sh"
+          - "scripts/usage-prune.sh"
+          - "scripts/usage-mirror.sh"
+          - "scripts/usage-drain.sh"
+          - "scripts/usage-task.sh"
+          - "scripts/usage-attribute.sh"
+          - "scripts/usage-backfill.sh"
+          - "scripts/build-usage-validator.js"
+          - "scripts/tests/test-usage-storage*.sh"
+          - "scripts/tests/fixtures/usage-storage/**"
+          - "schemas/**"
+          - "package.json"
+          - "package-lock.json"
+          - "docs/usage-storage.md"
+          - "docs/usage-organization.md"
+    portability: portable
+    requires:
+      runtime: node@22
+    command:
+      - npm install
+      - bash scripts/tests/test-usage-storage.sh
+      - bash scripts/tests/test-usage-storage-mirror.sh
+      - node scripts/build-usage-validator.js --check
+
+  # usage-attribution validates spec 0208's declaration channels, attribution
+  # ledger, and per-fidelity rollups: the resolver's four-channel order and
+  # offline worktree-or-branch derivation, the append-only ledger's read-time
+  # override, and the registered-derived-store prune reach (spec 0207
+  # delta-01 R28/R33). Deliberately NOT changeset-gated, for the same reason
+  # usage-storage above is not — a node@22 capability must never enter the
+  # fail-safe job's python-only execution set. The capture tree is in the
+  # paths filter because the resolution point is scripts/lib/usage-capture/
+  # index.js and the backfill's no-channel rule is backfill.js: without it,
+  # an edit dropping the resolveAttribution() call would leave usage-capture
+  # green (it asserts nothing about attribution), usage-storage green (it
+  # does not fire on the capture tree), and usage-attribution not run at all.
+  - id: usage-attribution
+    name: "Validate the usage-attribution declaration channels and ledger"
+    trigger:
+      - on: pull-request
+        branches: [main, "release/**"]
+        paths:
+          - "scripts/lib/usage-store/**"
+          - "scripts/lib/usage-capture/**"
+          - "scripts/usage-task.sh"
+          - "scripts/usage-attribute.sh"
+          - "scripts/tests/test-usage-attribution.sh"
+          - "scripts/tests/fixtures/usage-attribution/**"
+          - "docs/usage-attribution.md"
+          - "schemas/**"
+          - "package.json"
+          - "package-lock.json"
+      - on: push
+        branches: [main, "release/**"]
+        paths:
+          - "scripts/lib/usage-store/**"
+          - "scripts/lib/usage-capture/**"
+          - "scripts/usage-task.sh"
+          - "scripts/usage-attribute.sh"
+          - "scripts/tests/test-usage-attribution.sh"
+          - "scripts/tests/fixtures/usage-attribution/**"
+          - "docs/usage-attribution.md"
+          - "schemas/**"
+          - "package.json"
+          - "package-lock.json"
+    portability: portable
+    requires:
+      runtime: node@22
+    command:
+      - npm install
+      - bash scripts/tests/test-usage-attribution.sh
+
+  # usage-pricing validates spec 0209's comparative pricing engine: the
+  # model-id resolution pipeline (exact/alias/family/org fallback), the
+  # cache-tier and long-context arithmetic against the real LiteLLM field
+  # names, currency conversion against a fixed ECB fixture (including the
+  # freshness and suppression FX cases), the three-timestamp and
+  # --as-of-today contract, the per-fidelity rollup rules, and the R37
+  # registered-derived-store prune reach (the two-store case delta-01 R33
+  # requires). Fully offline — a hand-built ~14-entry fixture price list,
+  # never the real 2.9 MB snapshot. Deliberately NOT changeset-gated, for
+  # the same reason usage-storage above is not — a node@22 capability must
+  # never enter the fail-safe job's python-only execution set. The
+  # usage-store tree is in the paths filter because step 9 of the plan puts
+  # both halves of the R37 mechanism there (derivedStores() in layout.js,
+  # the walk in prune.js): without it, a changeset touching only layout.js
+  # or prune.js would not run the suite that owns the R37 assertion.
+  - id: usage-pricing
+    name: "Validate the usage-pricing model-id resolution, arithmetic, and prune reach"
+    trigger:
+      - on: pull-request
+        branches: [main, "release/**"]
+        paths:
+          - "scripts/lib/usage-price/**"
+          - "scripts/usage-price.sh"
+          - "scripts/tests/test-usage-pricing*.sh"
+          - "scripts/tests/fixtures/usage-pricing/**"
+          - "model-prices.org.json"
+          - "scripts/lib/usage-store/**"
+          - "package.json"
+          - "package-lock.json"
+      - on: push
+        branches: [main, "release/**"]
+        paths:
+          - "scripts/lib/usage-price/**"
+          - "scripts/usage-price.sh"
+          - "scripts/tests/test-usage-pricing*.sh"
+          - "scripts/tests/fixtures/usage-pricing/**"
+          - "model-prices.org.json"
+          - "scripts/lib/usage-store/**"
+          - "package.json"
+          - "package-lock.json"
+    portability: portable
+    requires:
+      runtime: node@22
+    command:
+      - npm install
+      - bash scripts/tests/test-usage-pricing.sh
+
+  # usage-dashboard is spec 0210's three-form agreement, injection and
+  # loopback-bind suite (PLAN v2 steps 13-15). Fully offline, reusing the
+  # usage-pricing fixture price list. Not changeset-gated, for the same
+  # node@22 reason as usage-pricing above. The usage-store and usage-price
+  # trees and model-prices.org.json are in the paths filter because the view
+  # model reads through both (priceRecord() loads the org table on every
+  # call), so a change to either can shift a figure the dashboard shows.
+  - id: usage-dashboard
+    name: "Validate the usage dashboard's three delivery forms, injection safety, and loopback bind"
+    trigger:
+      - on: pull-request
+        branches: [main, "release/**"]
+        paths:
+          - "scripts/lib/usage-dashboard/**"
+          - "scripts/usage-dashboard.sh"
+          - "scripts/tests/test-usage-dashboard*.sh"
+          - "scripts/tests/fixtures/usage-dashboard/**"
+          - "scripts/tests/fixtures/usage-pricing/**"
+          - "model-prices.org.json"
+          - "scripts/lib/usage-store/**"
+          - "scripts/lib/usage-price/**"
+          - "scripts/usage-query.sh"
+          - "scripts/usage-price.sh"
+          - "scripts/usage-attribute.sh"
+          - "scripts/usage-prune.sh"
+          - "schemas/usage-record/**"
+          - "package.json"
+          - "package-lock.json"
+      - on: push
+        branches: [main, "release/**"]
+        paths:
+          - "scripts/lib/usage-dashboard/**"
+          - "scripts/usage-dashboard.sh"
+          - "scripts/tests/test-usage-dashboard*.sh"
+          - "scripts/tests/fixtures/usage-dashboard/**"
+          - "scripts/tests/fixtures/usage-pricing/**"
+          - "model-prices.org.json"
+          - "scripts/lib/usage-store/**"
+          - "scripts/lib/usage-price/**"
+          - "scripts/usage-query.sh"
+          - "scripts/usage-price.sh"
+          - "scripts/usage-attribute.sh"
+          - "scripts/usage-prune.sh"
+          - "schemas/usage-record/**"
+          - "package.json"
+          - "package-lock.json"
+    portability: portable
+    requires:
+      runtime: node@22
+    command:
+      - npm install
+      - bash scripts/tests/test-usage-dashboard.sh
 
   # gitlab-ci-check is the generator's own drift gate (spec 0048 R6/R7),
   # registered as a portable capability so the verification surface is itself
@@ -1100,22 +1619,103 @@ capabilities:
   # the property this capability asserted (a tag-triggered release path)
   # is retired, not relocated.
 
-  # release-monorepo.yml runs the semantic-release monorepo pipeline on push to
-  # main (.github/workflows/release-monorepo.yml lines 3-7).
+  # release runs the monorepo release driver (scripts/monorepo-release.sh) on
+  # push to main. Portable since spec 0213: the SAME driver and engine
+  # (semantic-release) publish on both legs — GitHub Actions
+  # (.github/workflows/release-monorepo.yml, @semantic-release/github) and
+  # GitLab CI (the generated `release` job, @semantic-release/gitlab to the
+  # generic package registry plus a GitLab release). The driver detects the
+  # forge itself and sets the GitHub commit identity itself, so the business
+  # steps are identical on both engines. The credential crosses the engines
+  # under the one env key RELEASE_TOKEN (spec 0131 compares env KEYS): its
+  # GitLab value is the masked CI/CD variable $GITLAB_TOKEN (a project access
+  # token with api + write_repository, allowed to push to the protected
+  # release branch and to create tags); its GitHub value is
+  # secrets.GITHUB_TOKEN. yq is required by the packager's render step
+  # (scripts/build-extension.sh). Full history: the engine reads every tag.
   - id: release
     name: "Run the monorepo semantic-release pipeline"
     trigger:
       - on: push
         branches: [main]
-    portability: specific
-    exception:
-      engine: github-actions
-      evidence: >
-        Runs `scripts/monorepo-release.sh` driven by the GitHub
-        `${{ secrets.GITHUB_TOKEN }}` with `issues: write` /
-        `pull-requests: write` permissions to create GitHub Releases and
-        comment on GitHub issues/PRs
-        (.github/workflows/release-monorepo.yml lines 9-44). The release
-        tooling targets the GitHub Releases and GitHub issue APIs, which have
-        no faithful equivalent on GitLab CI, so the capability is hand-authored
-        per engine, not generated.
+    portability: portable
+    requires:
+      runtime: node@22
+      tools: [jq, yq]
+      history-depth: full
+    env:
+      RELEASE_TOKEN: "$GITLAB_TOKEN"
+    command:
+      - npm install --include=dev
+      - bash scripts/monorepo-release.sh
+
+  # release-rehearsal runs the same driver in rehearsal mode on demand
+  # (spec 0213 R12): it computes each extension's next version, tag and
+  # release note and builds the archive, with NO credential — the engine's dry
+  # run happens in a throwaway clone whose every git remote operation is
+  # redirected to a throwaway local mirror, and the config carries no publish
+  # plugin. On GitLab run it from a branch pipeline (the driver refuses a
+  # merge-request or tag pipeline).
+  - id: release-rehearsal
+    name: "Rehearse the monorepo release without publishing"
+    trigger:
+      - on: manual
+    portability: portable
+    requires:
+      runtime: node@22
+      tools: [jq, yq]
+      history-depth: full
+    env:
+      RELEASE_DRY_RUN: "true"
+    command:
+      - npm install --include=dev
+      - bash scripts/monorepo-release.sh
+
+  # release-tests exercises the release driver (spec 0213 R17): the hermetic
+  # driver test, the real-engine test against a local forge stub, and the
+  # lint-safe changelog facade test (issue #1364).
+  # Deliberately NOT changeset-gated, for the same reason usage-storage above
+  # is not — a node@22 capability must never enter the fail-safe job's
+  # python-only execution set.
+  - id: release-tests
+    name: "Test the forge-aware monorepo release driver"
+    trigger:
+      - on: pull-request
+        branches: [main, "release/**"]
+        paths:
+          - "scripts/monorepo-release.sh"
+          - "scripts/lib/monorepo-release-lib.sh"
+          - "scripts/lib/release-rehearse.mjs"
+          - "scripts/lib/release-notes/**"
+          - "scripts/tests/test-monorepo-release*.sh"
+          - "scripts/tests/release-changelog.test.ts"
+          - ".markdownlintrc"
+          - "scripts/tests/fixtures/release/**"
+          - "scripts/release-package-extension.sh"
+          - "scripts/build-extension.sh"
+          - "package.json"
+          - "package-lock.json"
+      - on: push
+        branches: [main, "release/**"]
+        paths:
+          - "scripts/monorepo-release.sh"
+          - "scripts/lib/monorepo-release-lib.sh"
+          - "scripts/lib/release-rehearse.mjs"
+          - "scripts/lib/release-notes/**"
+          - "scripts/tests/test-monorepo-release*.sh"
+          - "scripts/tests/release-changelog.test.ts"
+          - ".markdownlintrc"
+          - "scripts/tests/fixtures/release/**"
+          - "scripts/release-package-extension.sh"
+          - "scripts/build-extension.sh"
+          - "package.json"
+          - "package-lock.json"
+    portability: portable
+    requires:
+      runtime: node@22
+      tools: [jq, yq]
+    command:
+      - npm install --include=dev
+      - bash scripts/tests/test-monorepo-release.sh
+      - bash scripts/tests/test-monorepo-release-engine.sh
+      - node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tests/release-changelog.test.ts

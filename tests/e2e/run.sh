@@ -244,11 +244,16 @@ for scenario in "${SELECTED_SCENARIOS[@]}"; do
 
     desc="${cli}/${scenario}"
 
-    # Auth gate.
+    # Auth gate. e2e_auth_ready sets E2E_AUTH_READY_CREDENTIAL_PATH as a
+    # side effect on a ready result (spec 0194 R9 record accuracy; issue
+    # #1107 fix 2) — captured immediately so a later call for a different
+    # cli/scenario pair cannot overwrite it before this pair's scenario
+    # script runs.
     if ! e2e_auth_ready "$cli"; then
       tap_emit skip "$desc" "unconfigured (run \`task e2e:auth:${cli}\`)"
       continue
     fi
+    credential_path="${E2E_AUTH_READY_CREDENTIAL_PATH:-unknown}"
 
     image="$(jq -r --arg c "$cli" '.cli[$c].image' "$EFFECTIVE_JSON")"
     case_dir="${REPORT_DIR}/${cli}/${scenario}"
@@ -268,6 +273,14 @@ for scenario in "${SELECTED_SCENARIOS[@]}"; do
         tap_emit skip "$desc" "dry-run"
         continue
       fi
+      # Ensure-before / assert-after bracket (spec 0194 R5; PLAN v2 step 15).
+      # Load-bearing, not belt-and-braces: on this host, `docker run -v
+      # <absent-host-path>:...` fails at the daemon (exit 126, "chown ...
+      # permission denied") and leaves 0755 directories behind — precisely
+      # the machine spec 0194 R10 mandates must work (credential env var
+      # set, requirements 1-7 unrealised). See scripts/e2e/lib/auth-
+      # common.sh's e2e_ensure_bundle_dir / e2e_assert_bundle_modes.
+      e2e_ensure_bundle_dir "$cli"
       if env \
           E2E_LIB_DIR="${SCRIPT_DIR}/lib" \
           E2E_REPORT_DIR="$case_dir" \
@@ -277,6 +290,7 @@ for scenario in "${SELECTED_SCENARIOS[@]}"; do
           E2E_CREWRIG_E2E_HOME="$(e2e_e2e_home)" \
           E2E_SCENARIO_DIR="${SCRIPT_DIR}/scenarios/${scenario}" \
           E2E_RUN_ID="$(basename "$REPORT_DIR")" \
+          E2E_CREDENTIAL_PATH="$credential_path" \
           "$scenario_script" \
           >"${case_dir}/stdout" \
           2>"${case_dir}/stderr"
@@ -285,6 +299,7 @@ for scenario in "${SELECTED_SCENARIOS[@]}"; do
       else
         exit_code=$?
       fi
+      e2e_assert_bundle_modes "$cli"
       printf '%d\n' "$exit_code" > "${case_dir}/exit"
 
       case "$exit_code" in
@@ -344,6 +359,9 @@ for scenario in "${SELECTED_SCENARIOS[@]}"; do
       continue
     fi
 
+    # Ensure-before / assert-after bracket — see the delegation branch above
+    # for the full rationale (spec 0194 R5; PLAN v2 step 15).
+    e2e_ensure_bundle_dir "$cli"
     if "${docker_argv[@]}" \
         >"${case_dir}/stdout" \
         2>"${case_dir}/stderr"
@@ -352,6 +370,7 @@ for scenario in "${SELECTED_SCENARIOS[@]}"; do
     else
       exit_code=$?
     fi
+    e2e_assert_bundle_modes "$cli"
     printf '%d\n' "$exit_code" > "${case_dir}/exit"
 
     case "$exit_code" in

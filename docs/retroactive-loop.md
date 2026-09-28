@@ -101,6 +101,17 @@ is fully autonomous from the moment the PR exists — no user gate fires
 until the max-iteration guardrail (see *Max-iteration guardrail*) or the
 final merge-authorization request.
 
+**Self-healing backstop.** Step 1 above is an orchestrator obligation,
+not a suggestion — but if it is ever missed and the `pr-reviewer` seat
+is spawned before the `iter:1` label lands, the `pr-reviewer` skill's
+own Preflight step notices the missing `iter:N` label and applies
+`iter:1` itself before minting any finding identifier
+(`artifacts/core/skills/pr-reviewer/SKILL.md` → *Iteration-label
+self-heal*). This is a second line of defense, not a relaxation of
+step 1: the orchestrator SHALL still apply the label before spawning.
+The two surfaces stay in lockstep per the *Routing matrix* convention
+below.
+
 ## Routing matrix
 
 The matrix below is the engine's authoritative reference. It is also
@@ -254,7 +265,19 @@ retrospectives.
 The lifecycle terminates at MERGE iff all four conditions hold on
 the same REVIEW pass (spec 0005 R8, as amended by spec 0162):
 
-1. The verdict line is `### Verdict: APPROVE`.
+1. APPROVE is recognized on the `review` surface through exactly one
+   of the three transports of the posting-identity fallback ladder in
+   [`artifacts/core/skills/pr-reviewer/SKILL.md`](../artifacts/core/skills/pr-reviewer/SKILL.md)
+   → *Post the review*, with the seat-line placement each transport
+   carries per [`docs/reviewer-seat.md`](reviewer-seat.md) → *The seat
+   line, and where it goes*: a formal review posted via
+   `gh pr review <number> --approve` (distinct-identities rung), where
+   the APPROVE review event itself is the verdict and no verdict text
+   line is present or required; a plain pull-request comment
+   (`gh pr comment`, shared-identity rung) whose body opens with a
+   `## Verdict: APPROVE` line (level-2 heading); or a verdict recorded
+   on the logbook issue (posting-denied rung), whose body likewise
+   opens with a `## Verdict: APPROVE` line (level-2 heading).
 2. The pass surfaces **zero blocking** findings of any class.
 3. CI is **green** on the head commit reviewed. The engine SHALL
    query `gh pr checks <pr-number>` and confirm every required

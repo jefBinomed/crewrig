@@ -4,6 +4,8 @@ set -e
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 # shellcheck source=scripts/lib/tls-delegation.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/tls-delegation.sh"
+# shellcheck source=scripts/lib/usage-capture-optin.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/usage-capture-optin.sh"
 
 CLAUDE_HOME="${HOME}/.claude"
 CLAUDE_RULES="${CLAUDE_HOME}/rules"
@@ -223,8 +225,8 @@ if [ -n "$MEMPALACE_PYTHON_BIN" ]; then
   # Tier-1 ordering unchanged: the ChromaDB supervisor installs before any
   # mempalace registration is written, HTTP or stdio.
   install_chroma_daemon "$REPO_DIR"
-  ensure_mempalace_http "$REPO_DIR" claude
-  _mempalace_rc=$?
+  _mempalace_rc=0
+  ensure_mempalace_http "$REPO_DIR" claude || _mempalace_rc=$?
   case "$_mempalace_rc" in
     0)
       MEMPALACE_INSTALLED=1
@@ -377,8 +379,7 @@ CLAUDE_AGENTS_HOME="$CLAUDE_HOME/agents"
 
 # install_tier_to_home <tier> — copy a staged tier's Claude skills and agents
 # into the user home. Skills land in ~/.claude/skills/<name>/, agents in
-# ~/.claude/agents/<name>/ (Claude's directory layout). No-op if the tier was
-# not built.
+# ~/.claude/agents/<name>.md (flat file). No-op if the tier was not built.
 install_tier_to_home() {
   local tier="$1"
   local staging="$REPO_DIR/dist/$tier/.claude"
@@ -399,13 +400,15 @@ install_tier_to_home() {
   fi
   if [ -d "$staging/agents" ]; then
     mkdir -p "$CLAUDE_AGENTS_HOME"
-    for agent_dir in "$staging/agents"/*/; do
-      [ -d "$agent_dir" ] || continue
+    for agent_file in "$staging/agents"/*.md; do
+      [ -f "$agent_file" ] || continue
       local agent_name
-      agent_name="$(basename "$agent_dir")"
-      rm -rf "${CLAUDE_AGENTS_HOME:?}/$agent_name"
-      cp -R "$agent_dir" "$CLAUDE_AGENTS_HOME/$agent_name"
-      echo "  Installed agent: $tier/$agent_name -> ~/.claude/agents/$agent_name"
+      agent_name="$(basename "$agent_file" .md)"
+      if [ -d "${CLAUDE_AGENTS_HOME:?}/$agent_name" ]; then
+        rm -rf "${CLAUDE_AGENTS_HOME:?}/$agent_name"
+      fi
+      cp "$agent_file" "$CLAUDE_AGENTS_HOME/$agent_name.md"
+      echo "  Installed agent: $tier/$agent_name -> ~/.claude/agents/$agent_name.md"
     done
   fi
 }
@@ -432,7 +435,9 @@ done
 
 # --- Transcript hooks (opt-in) ---
 echo ""
-ENABLE_TRANSCRIPTS=$(echo -e "no\nyes" | fzf --height 10% --header "Enable automatic session recording to MemPalace? (opt-in)")
+# `|| true`: under `set -e`, Esc makes fzf exit 130 and would abort setup before
+# the usage-capture question below; a canceled answer reads as a decline.
+ENABLE_TRANSCRIPTS=$(echo -e "no\nyes" | fzf --height 10% --header "Enable automatic session recording to MemPalace? (opt-in)" || true)
 if [ "$ENABLE_TRANSCRIPTS" = "yes" ]; then
   HOOKS_SRC="$REPO_DIR/hooks/claude-transcript-hooks.json"
   HOOK_SCRIPT_SRC="$REPO_DIR/hooks/mempalace-transcript.sh"
@@ -450,14 +455,12 @@ if [ "$ENABLE_TRANSCRIPTS" = "yes" ]; then
     echo "     (so the hook script imports mempalace from the right interpreter)"
   fi
   echo ""
-  CONFIRM_TRANSCRIPTS=$(echo -e "yes\nno" | fzf --height 10% --header "Apply these changes to settings.json?")
+  CONFIRM_TRANSCRIPTS=$(echo -e "yes\nno" | fzf --height 10% --header "Apply these changes to settings.json?" || true)
   if [ "$CONFIRM_TRANSCRIPTS" = "yes" ]; then
-    [ -f "$SETTINGS_TARGET" ] || echo "{}" > "$SETTINGS_TARGET"
     mkdir -p "$CLAUDE_HOOKS_DIR"
     install_file "$HOOK_SCRIPT_SRC" "$HOOK_SCRIPT_TARGET" \
       "mempalace-transcript.sh -> ~/.claude/hooks/mempalace-transcript.sh"
     chmod +x "$HOOK_SCRIPT_TARGET" 2>/dev/null || true
-    backup_file "$SETTINGS_TARGET"
     ENV_PATCH='{"MEMPALACE_TRANSCRIPT_ENABLED": "1"}'
     if [ -n "${MEMPALACE_PYTHON_BIN:-}" ]; then
       ENV_PATCH=$(jq -nc --arg py "$MEMPALACE_PYTHON_BIN" \
@@ -465,9 +468,10 @@ if [ "$ENABLE_TRANSCRIPTS" = "yes" ]; then
     fi
     GUARD_SCRIPT_SRC="$REPO_DIR/hooks/worktree-git-guard.sh"
     GUARD_ABS="$(cd "$(dirname "$GUARD_SCRIPT_SRC")" && pwd -P)/$(basename "$GUARD_SCRIPT_SRC")"
-    # Rewrite every nested command to use the installed absolute hook path
-    # or the in-repo absolute guard path instead of the source-file's
-    # "$CLAUDE_PROJECT_DIR/..." tokens.
+    # Rewrite every nested command to use the installed absolute hook path or
+    # the in-repo absolute guard path instead of the source-file's
+    # "$CLAUDE_PROJECT_DIR/..." tokens. Usage capture is not part of this
+    # manifest: it has its own opt-in below (spec 0211).
     HOOKS_PATCHED_TMP="$(mktemp)"
     jq --arg hook_path "$HOOK_SCRIPT_TARGET" --arg guard_path "$GUARD_ABS" \
       '(.. | objects | select(.type? == "command") | .command) |=
@@ -479,20 +483,45 @@ if [ "$ENABLE_TRANSCRIPTS" = "yes" ]; then
       rm -f "$HOOKS_PATCHED_TMP"
       exit 1
     fi
-    jq -s --argjson patch "$ENV_PATCH" \
-      '.[0] * .[1] | .env = ((.env // {}) + $patch)' \
-      "$SETTINGS_TARGET" "$HOOKS_PATCHED_TMP" > "${SETTINGS_TARGET}.tmp" && \
-      mv "${SETTINGS_TARGET}.tmp" "$SETTINGS_TARGET"
+    # Backup-first, 0600, and it carries any registered capture command
+    # through the merge unchanged (spec 0211 R8).
+    if ! merge_session_recording_hooks claude "$SETTINGS_TARGET" "$HOOKS_PATCHED_TMP" "$ENV_PATCH"; then
+      echo "  Transcript activation FAILED — setup continues without it." >&2
+    else
+      echo "  Transcript hooks merged into settings.json"
+      echo "  Hook script installed at $HOOK_SCRIPT_TARGET (no longer depends on the repo path)"
+      echo "  Worktree git guard wired to $GUARD_ABS (in-repo absolute path)"
+      warn_if_linked_worktree "$REPO_DIR" "worktree git guard"
+      echo "  env patched: $ENV_PATCH"
+    fi
     rm -f "$HOOKS_PATCHED_TMP"
-    echo "  Transcript hooks merged into settings.json"
-    echo "  Hook script installed at $HOOK_SCRIPT_TARGET (no longer depends on the repo path)"
-    echo "  Worktree git guard wired to $GUARD_ABS (in-repo absolute path)"
-    echo "  env patched: $ENV_PATCH"
   else
     echo "  Transcript activation canceled by user."
   fi
 else
   echo "  Session recording disabled (can enable later by re-running this script)."
+fi
+
+# --- Usage capture (opt-in, spec 0211) ---
+# Its own question, asked whatever the session-recording answer was (R1) and
+# never gated on MemPalace (R3): capture writes to the file-system journal.
+# Every read and write of a capture entry lives in scripts/lib/usage-capture-optin.sh.
+echo ""
+uc_rc=0
+UC_STATE="$(usage_capture_state claude "$SETTINGS_TARGET")" || uc_rc=$?
+if [ "$uc_rc" -ne 0 ]; then
+  echo "  WARNING: cannot read $SETTINGS_TARGET as JSON; usage-capture step skipped." >&2
+else
+  if [ "$UC_STATE" = "absent" ]; then
+    usage_capture_disclose claude "$SETTINGS_TARGET" "$REPO_DIR" || true
+    UC_ANSWER=$(printf 'no\nyes\n' | fzf --height 10% --header "Capture token usage for Claude Code? (opt-in, MemPalace not required)" || true)
+  else
+    UC_PATHS="$(usage_capture_paths claude "$SETTINGS_TARGET")" || UC_PATHS=""
+    echo "Usage capture is registered in $SETTINGS_TARGET, at:"
+    printf '%s\n' "$UC_PATHS" | sed 's/^/  /'
+    UC_ANSWER=$(printf 'keep\nremove\n' | fzf --height 10% --header "Usage capture is registered for Claude Code. Keep it or remove it?" || true)
+  fi
+  usage_capture_apply claude "$SETTINGS_TARGET" "$REPO_DIR" "$UC_STATE" "$UC_ANSWER" || echo "  Usage-capture step FAILED — setup continues." >&2
 fi
 
 echo ""

@@ -2,7 +2,7 @@
 name: pr-reviewer
 description: "Independent PR review skill. Activate to audit a pull request cold — without authoring context — covering correctness, convention compliance, test coverage, and linter findings. Emits a structured verdict (Approve / Request Changes / Comment)."
 license: Apache-2.0
-compatibility: "Requires bash and gh CLI (for diff fetch and review post). Optional: shellcheck (lint-shell.sh), markdownlint (lint-markdown.sh), ruff or flake8 (lint-python.sh). Missing tools degrade gracefully."
+compatibility: "Requires bash and gh CLI (for diff fetch and review post). Optional: shellcheck (lint-shell.sh), markdownlint (lint-markdown.sh), ruff or flake8 (lint-python.sh), Node >= 24 with oxlint and oxfmt (lint-typescript.ts). Missing tools degrade gracefully."
 allowed-tools:
   - Read
   - Bash
@@ -12,7 +12,7 @@ metadata:
   provenance:
     canonical: "https://github.com/crewrig/crewrig"
     feedback: "https://github.com/crewrig/crewrig"
-    version: "1.4.0"
+    version: "1.7.0"
 ---
 
 
@@ -69,6 +69,83 @@ mandatory reading narrows (step 3), but the CI state of the artifact's
 current head stays inside it on every pass. There is no pass on which
 this preflight is skippable.
 
+**Iteration-label self-heal.** Before minting any finding identifier (the
+`i<N>-F<M>` / `s<N>-F<M>` scheme defined in *Finding class taxonomy*
+below), check whether the pull request carries any label matching
+`iter:N`:
+
+```bash
+gh pr view <number> --repo <owner/repo> --json labels --jq '.labels[].name' | grep -E '^iter:[0-9]+$'
+```
+
+- If no `iter:N` label is present, apply `iter:1` yourself before
+  proceeding: `gh pr edit <number> --repo <owner/repo> --add-label
+  "iter:1"`. This backstops the orchestrator's own labeling step in
+  `docs/retroactive-loop.md` → *REVIEW launch trigger* — this skill's
+  own identifier-minting scheme depends on the label, so it must never
+  be missing when this skill runs.
+- If an `iter:N` label is already present, leave it untouched and
+  derive every finding identifier this pass mints from its `<N>` value.
+- If the `gh pr edit --add-label` call itself fails (missing label
+  definition, permission denial, connectivity error), state the
+  failure explicitly in the verdict's CI status section rather than
+  silently proceeding as if `iter:1` had been applied — do not mint
+  finding identifiers under an assumed `N` in that case.
+- This check runs on **every** pass against a given PR, not only a
+  seat's first pass — the bound in step 3 narrows re-examination of
+  file content, never this label check.
+
+#### Waiting on a pending check
+
+A `run_in_background` task or the `Monitor` tool's completion signal is
+a hint, never proof. Both watch a process from outside the check
+itself, and either can report "done" while the check the forge actually
+tracks is still pending, still queued, or has since been re-triggered.
+Treat either signal as a cue to look, not as the look itself.
+
+Whenever a required check was observed `pending` at any point during
+the current review pass, the last thing done before composing the
+verdict — no matter how that wait was carried out — is one direct,
+synchronous query of the check's live state: `gh pr checks <number>` or
+the equivalent `gh api repos/<owner>/<repo>/commits/<sha>/check-runs`
+call. A verdict is never written off a background or monitor signal
+alone; the direct query is what the CI status section actually reports.
+
+The recommended way to wait in the first place is a foreground bounded
+retry loop — fixed attempt count, fixed inter-attempt delay, run
+synchronously in the reviewer's own turn — rather than a background
+task or a live monitor, because the loop's own exit condition already
+*is* the direct query:
+
+```bash
+for i in $(seq 1 10); do
+  gh pr checks <number> --repo <owner/repo>
+  rc=$?
+  [ "$rc" -ne 8 ] && break   # anything but "still pending" ends the wait
+  sleep 30
+done
+```
+
+`gh pr checks` exits `8` specifically for "checks pending"; any other
+exit code — `0` (all passing) or a non-zero, non-`8` failure — means the
+checks have already resolved, one way or the other, and the wait is
+over. Whether the loop ends by resolving or by exhausting its attempts,
+what happens next is unchanged: the R2 direct, synchronous query above
+is what actually determines the check's bucket (`pass`, `fail`, or
+`pending`). Never assume a bucket from the loop's exit alone — a
+required check that failed throughout the wait window must not be
+reported as still pending.
+
+A non-`8` exit is not automatically a resolved-failing check, though:
+`gh help exit-codes` documents that any command failure — network
+hiccup, timeout, rate-limit — also returns the same generic exit `1`
+as a genuine check failure, so the loop alone cannot tell the two
+apart. The R2 direct, synchronous query is what disambiguates them,
+because it must cite an actual named check and its status; if that
+final query itself comes back as a bare connection error rather than
+a named check/status, treat it as a cue to retry the query, not as
+grounds to report the check failed or pending.
+
 ### 2. Read the project conventions
 
 Open `AGENTS.md` at the repo root (or the project's equivalent) and
@@ -115,6 +192,15 @@ a vacant seat, nothing is bounded — read the whole artifact.
 Select scripts based on file extensions in the changed-files list, then
 invoke each with the matching subset of paths. Capture stdout and exit
 code; treat exit 0 as no findings, exit 1 as findings present.
+
+`lint-typescript.ts` is invoked through Node, from the repository root
+so it finds the repository's `.oxlintrc.json`, `.oxfmtrc.json` and
+`node_modules/.bin`: `node lint-typescript.ts <changed *.ts files>`. It
+needs Node >= 24 (unflagged type stripping). On an older Node the
+interpreter fails before the script's own degrade path can run, so
+treat a non-zero exit that printed no `lint-typescript:` line — or a
+Node version below 24 — as "tool unavailable, skipped", never as a
+finding. The real Node floor guard is owned by sub-spec A2 (#1324).
 
 See *Scripts* below for the full table.
 
@@ -224,7 +310,7 @@ the role that opened it. Full rule: `docs/agent-team-protocol.md` →
 
 ## Scripts
 
-The skill ships five linter scripts under `scripts/`. Each accepts
+The skill ships six linter scripts under `scripts/`. Each accepts
 file paths as positional arguments, prints findings to stdout, and
 returns exit 0 (clean) or exit 1 (findings).
 
@@ -235,9 +321,11 @@ returns exit 0 (clean) or exit 1 (findings).
 | `lint-skill.sh` | `SKILL.md` | required frontmatter fields, version bumped vs `BASE_REF` | yq absent (grep fallback) |
 | `lint-python.sh` | `*.py` | ruff or flake8 output, bare `print(` in non-test files | both ruff and flake8 absent |
 | `lint-json.sh` | `*.json` | `jq` parse, trailing-comma heuristic | jq absent |
+| `lint-typescript.ts` | `*.ts` | Oxlint type-aware strict typing (`no-explicit-any`, `ban-ts-comment`, `no-unsafe-*`), Oxfmt check mode; `max-lines` > 300 is a non-blocking warning | oxlint or oxfmt absent (per tool) |
 
-All five scripts use `command -v <tool>` before invoking optional
-tools and print a one-line note when degrading, so a missing tool
+The five shell scripts use `command -v <tool>` before invoking optional
+tools, and `lint-typescript.ts` resolves `./node_modules/.bin` then
+`PATH`; all six print a one-line note when degrading, so a missing tool
 never aborts the review.
 
 ## Finding class taxonomy
@@ -256,9 +344,10 @@ through the matrix as if blocking.
 **Reviewer-minted identifiers.** Alongside the `class:` field, every
 finding carries an identifier that names the pass that raised it and stays
 stable for the life of the seat: `i<N>-F<M>` on the `review` surface,
-where `<N>` is the iteration ordinal the `iter:N` label carried when the
-pass ran; `s<N>-F<M>` on the `specs` surface, where `<N>` is the seat's
-pass ordinal counted across every artifact of that surface. These are what
+where `<N>` is the iteration ordinal the PR's `iter:N` label carries after
+step 1's self-heal check — never assumed or hardcoded; `s<N>-F<M>` on the
+`specs` surface, where `<N>` is the seat's pass ordinal counted across
+every artifact of that surface. These are what
 the next pass's prior-finding audit enumerates
 (`docs/reviewer-seat.md` → *Finding identifiers*).
 

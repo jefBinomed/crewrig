@@ -130,6 +130,71 @@
           "title": "Extension hook events",
           "path": "docs/extension-hook-events.md",
           "nav_order": 80
+        },
+        {
+          "title": "Model mapping format",
+          "path": "docs/model-mapping-format.md",
+          "nav_order": 90
+        },
+        {
+          "title": "Org model mapping override channel",
+          "path": "docs/org-model-mapping-override.md",
+          "nav_order": 100
+        },
+        {
+          "title": "Agent capability-profile migration",
+          "path": "docs/agent-profile-migration.md",
+          "nav_order": 110
+        },
+        {
+          "title": "Usage guide",
+          "path": "docs/usage-guide.md",
+          "nav_order": 111
+        },
+        {
+          "title": "Usage architecture overview",
+          "path": "docs/usage-overview.md",
+          "nav_order": 112
+        },
+        {
+          "title": "Usage data: organization note",
+          "path": "docs/usage-organization.md",
+          "nav_order": 113
+        },
+        {
+          "title": "Usage capture architecture",
+          "path": "docs/usage-capture.md",
+          "nav_order": 115
+        },
+        {
+          "title": "Usage record format",
+          "path": "docs/usage-record-format.md",
+          "nav_order": 120
+        },
+        {
+          "title": "Usage storage",
+          "path": "docs/usage-storage.md",
+          "nav_order": 130
+        },
+        {
+          "title": "Usage attribution",
+          "path": "docs/usage-attribution.md",
+          "nav_order": 135
+        },
+        {
+          "title": "Usage pricing",
+          "path": "docs/usage-pricing.md",
+          "nav_order": 140
+        },
+        {
+          "title": "Usage dashboard",
+          "path": "docs/usage-dashboard.md",
+          "nav_order": 145
+        },
+        {
+          "title": "GitLab release publishing",
+          "path": "docs/gitlab-release-publishing.md",
+          "nav_order": 150
         }
       ]
     },
@@ -226,6 +291,11 @@
           "title": "ADR 0016 — Shared MemPalace MCP HTTP server",
           "path": "docs/adr/0016-shared-mempalace-mcp-http-server.md",
           "nav_order": 160
+        },
+        {
+          "title": "ADR 0017 — Usage record invariants",
+          "path": "docs/adr/0017-usage-record-invariants.md",
+          "nav_order": 170
         }
       ]
     }

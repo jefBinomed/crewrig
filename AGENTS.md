@@ -39,6 +39,20 @@ Skipping the sweep is a process violation equivalent to missing a lifecycle
 stage. A REVIEW pass that audits a session where the sweep was omitted SHALL
 emit a `class: tech` finding citing this section.
 
+**Reviewer-seat exemption.** A seated pass — an agent instantiated per
+[`docs/reviewer-seat.md`](docs/reviewer-seat.md) → *Instantiating a seated
+pass*, occupying the `specs`, `plan`, or `review` surface, on any pass
+ordinal of that seat — skips step 3 (cross-tool handoff lookup) and step 6
+(mandatory checkpoint write) of the sweep above, and still runs steps 1, 2,
+4, and 5 unchanged. The preceding paragraph's "process violation" rule and
+its accompanying `class: tech` finding do NOT apply to a seated pass's
+correctly-reasoned skip of steps 3 and 6 — see
+[`docs/reviewer-seat.md`](docs/reviewer-seat.md) → *Session Bootstrap for a
+seated pass* for the full rationale. Every other role — the orchestrator, a
+`developer` pass, an `architect` pass acting outside a seated review,
+`pr-logbook`, etc. — remains fully bound by the unmodified six-step sweep,
+with no exemption.
+
 Additionally, before opening any new ticket worktree, perform the additive,
 non-destructive session-start worktree-backlog surfacing in
 [`docs/agent-team-protocol.md`](docs/agent-team-protocol.md) → *Worktree
@@ -257,8 +271,8 @@ See [`docs/agent-team-protocol.md`](docs/agent-team-protocol.md) for the full pr
 **Critical rules — apply without reading the full doc:**
 
 - **Solo work prohibition.** Never treat a multi-step ticket with inline solo work when specialist agents are available. Inline solo work is reserved for trivial single-file edits explicitly scoped by the user.
-- **Coordination primitives on Claude Code CLI.** Claude Code runs a single implicit session team — there is no team to create. Use `Agent` (always with an explicit `subagent_type`) to delegate work to a specialist, `TaskCreate` (one task per role; self-contained brief in the `Agent` prompt) to track it, and `SendMessage` for all cross-agent communication. These three primitives are mandatory — not optional.
-- **Worktree isolation.** Before any `TaskCreate` or `Agent` spawn, create a dedicated git worktree. All team edits happen inside `.worktrees/<ticket-id>/`. The main working directory is read-only for the duration.
+- **Coordination primitives on Claude Code CLI.** Claude Code runs a single implicit session team — there is no team to create. Use `Agent` (always with an explicit `subagent_type`) to delegate work to a specialist, and `SendMessage` for all cross-agent communication — these two primitives are confirmed present on Claude Code and mandatory, not optional. `TaskCreate` (one task per role; self-contained brief in the `Agent` prompt) tracks that delegation when the harness exposes it; it is confirmed absent from the current Claude Code harness's tool surface (`docs/cli-matrix.md` → *Parity gaps*, issue #1267), and that absence is not a protocol violation to work around — proceed with `Agent` and `SendMessage` alone.
+- **Worktree isolation.** Before the `Agent` spawn that opens the ticket — and before any `TaskCreate` call too, when the harness exposes it — create a dedicated git worktree. All team edits happen inside `.worktrees/<ticket-id>/`. The main working directory is read-only for the duration.
 - **Anti-permission-laundering.** Never re-execute a subagent's denied action in the parent session. Subagent permission denials are treated as user-authored rejections and MUST be surfaced to the user for decision.
 - **Whole-tree git ops.** `git reset --hard`, `git stash`, `git clean` require an exclusive claim + empty `git status`. See [`docs/agent-team-protocol.md`](docs/agent-team-protocol.md) → *Worktree Isolation*.
 - **Built components.** Any commit touching `artifacts/` MUST also run `bash scripts/build-components.sh` and stage the regenerated outputs in the same commit.

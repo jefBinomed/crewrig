@@ -1,0 +1,68 @@
+name: Release Driver Tests
+
+on:
+  pull_request:
+    branches: [main, "release/**"]
+    paths:
+      - "scripts/monorepo-release.sh"
+      - "scripts/lib/monorepo-release-lib.sh"
+      - "scripts/lib/release-rehearse.mjs"
+      - "scripts/lib/release-notes/**"
+      - "scripts/tests/test-monorepo-release*.sh"
+      - "scripts/tests/release-changelog.test.ts"
+      - ".markdownlintrc"
+      - "scripts/tests/fixtures/release/**"
+      - "scripts/release-package-extension.sh"
+      - "scripts/build-extension.sh"
+      - "package.json"
+      - "package-lock.json"
+  push:
+    branches: [main, "release/**"]
+    paths:
+      - "scripts/monorepo-release.sh"
+      - "scripts/lib/monorepo-release-lib.sh"
+      - "scripts/lib/release-rehearse.mjs"
+      - "scripts/lib/release-notes/**"
+      - "scripts/tests/test-monorepo-release*.sh"
+      - "scripts/tests/release-changelog.test.ts"
+      - ".markdownlintrc"
+      - "scripts/tests/fixtures/release/**"
+      - "scripts/release-package-extension.sh"
+      - "scripts/build-extension.sh"
+      - "package.json"
+      - "package-lock.json"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  release-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Install dependencies
+        run: npm install --include=dev
+
+      - name: Test the release driver (hermetic)
+        run: bash scripts/tests/test-monorepo-release.sh
+
+      - name: Test the release driver (real engine, local forge stub)
+        run: bash scripts/tests/test-monorepo-release-engine.sh
+
+      - name: Test the lint-safe changelog facade (issue #1364)
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tests/release-changelog.test.ts
+      - name: Cancel workflow on job failure
+        if: failure()
+        uses: ./.github/actions/cancel-on-failure

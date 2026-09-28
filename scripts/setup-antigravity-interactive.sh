@@ -236,8 +236,8 @@ if [ "$INSTALL_SEQTHINK" = "yes" ]; then
   echo "  sequentialthinking MCP server configured."
 fi
 
-# Write atomically.
-echo "$MCP_BASE" | jq '.' > "${AGY_MCP_CONFIG}.tmp" && mv "${AGY_MCP_CONFIG}.tmp" "$AGY_MCP_CONFIG"
+# Write atomically (mktemp'd staging name, 0600, no symlink follow).
+echo "$MCP_BASE" | write_json_config_secure_from "$AGY_MCP_CONFIG" - '.'
 
 # Fold the operator's pre-existing non-reserved MCP servers back over the
 # framework base (spec 0089) — this is what preserves an existing Antigravity
@@ -263,8 +263,8 @@ fi
 # stdio entry stays (R19); 2 = the stdio entry stays with a loud lockout
 # warning (R20 — no stdio convergence against a probe-verified serving daemon).
 if [ "${INSTALL_MEMPALACE:-0}" -eq 1 ]; then
-  ensure_mempalace_http "$REPO_DIR" antigravity
-  _mempalace_rc=$?
+  _mempalace_rc=0
+  ensure_mempalace_http "$REPO_DIR" antigravity || _mempalace_rc=$?
   case "$_mempalace_rc" in
     0)
       echo "  MemPalace reaches shared memory through the HTTP daemon."
@@ -462,6 +462,91 @@ if [ "$ENABLE_TRANSCRIPTS" = "yes" ]; then
   fi
 else
   echo "  Session recording disabled (re-run this script to enable)."
+fi
+
+echo ""
+
+# --- Usage capture: statusline channel (opt-in) --- (spec 0206)
+#
+# No lifecycle hook event exists for this channel on Antigravity CLI — the
+# display-command invocation the CLI already makes for a user-configured
+# status line IS the trigger. `statusLine.command` in
+# ~/.gemini/antigravity-cli/settings.json is a DIFFERENT surface than the
+# transcript-hooks target above (~/.gemini/config/hooks.json): this ticket
+# never touches the latter (R14 — hooks/antigravity-transcript-hooks.json
+# stays untouched).
+#
+# hooks/antigravity-statusline-shim.sh is NEVER copied out of the repository
+# (same class as hooks/usage-capture.sh): the installer wires
+# statusLine.command to its own in-repo absolute path, ONLY when that value
+# was previously empty (R20) — a populated foreign value is left untouched
+# and the parity gap is recorded instead of installing a shim over it.
+STATUSLINE_SCRIPT_SRC="$REPO_DIR/hooks/antigravity-statusline-shim.sh"
+STATUSLINE_ABS="$(cd "$(dirname "$STATUSLINE_SCRIPT_SRC")" && pwd -P)/$(basename "$STATUSLINE_SCRIPT_SRC")"
+AGY_SETTINGS="$AGY_HOME/settings.json"
+CREWRIG_USAGE_ROOT="${CREWRIG_USAGE_ROOT:-${HOME}/.crewrig/usage}"
+STATUSLINE_MARKER="$CREWRIG_USAGE_ROOT/state/antigravity-statusline.json"
+
+STATUSLINE_INSTALLED_BY_US=0
+if [ -f "$STATUSLINE_MARKER" ]; then
+  INSTALLED_CMD="$(jq -r '.installedStatusLineCommand // empty' "$STATUSLINE_MARKER" 2>/dev/null)"
+  CURRENT_CMD_CHECK=""
+  if [ -f "$AGY_SETTINGS" ]; then
+    CURRENT_CMD_CHECK="$(jq -r '.statusLine.command // empty' "$AGY_SETTINGS" 2>/dev/null)"
+  fi
+  if [ -n "$INSTALLED_CMD" ] && [ "$INSTALLED_CMD" = "$CURRENT_CMD_CHECK" ]; then
+    STATUSLINE_INSTALLED_BY_US=1
+  fi
+fi
+
+if [ "$STATUSLINE_INSTALLED_BY_US" -eq 1 ]; then
+  echo "Antigravity usage capture is installed (statusLine.command wired to $INSTALLED_CMD)."
+  STATUSLINE_ACTION=$(echo -e "keep\nremove" | fzf --height 10% \
+    --header "Antigravity usage capture is installed — keep it, or remove it (restores the prior statusLine.command, R21)?")
+  if [ "$STATUSLINE_ACTION" = "remove" ]; then
+    PRIOR_CMD="$(jq -r '.priorStatusLineCommand // empty' "$STATUSLINE_MARKER" 2>/dev/null)"
+    backup_file "$AGY_SETTINGS"
+    if [ -n "$PRIOR_CMD" ]; then
+      jq --arg cmd "$PRIOR_CMD" '.statusLine.command = $cmd' "$AGY_SETTINGS" > "${AGY_SETTINGS}.tmp" && mv "${AGY_SETTINGS}.tmp" "$AGY_SETTINGS"
+    else
+      jq 'del(.statusLine.command)' "$AGY_SETTINGS" > "${AGY_SETTINGS}.tmp" && mv "${AGY_SETTINGS}.tmp" "$AGY_SETTINGS"
+    fi
+    rm -f "$STATUSLINE_MARKER"
+    echo "  Antigravity usage capture removed; statusLine.command restored to its prior value."
+  else
+    echo "  Antigravity usage capture kept."
+  fi
+else
+  ENABLE_USAGE_CAPTURE=$(echo -e "no\nyes" | fzf --height 10% --header "Enable Antigravity CLI usage capture (statusline channel, opt-in)?")
+  if [ "$ENABLE_USAGE_CAPTURE" = "yes" ]; then
+    CURRENT_STATUSLINE=""
+    if [ -f "$AGY_SETTINGS" ]; then
+      CURRENT_STATUSLINE="$(jq -r '.statusLine.command // empty' "$AGY_SETTINGS" 2>/dev/null)"
+    fi
+    if [ -n "$CURRENT_STATUSLINE" ]; then
+      echo "  statusLine.command already carries a value this framework did not install:"
+      echo "    $CURRENT_STATUSLINE"
+      echo "  Leaving it untouched (R20) — per-request/per-subagent usage capture stays"
+      echo "  unavailable for Antigravity CLI on this installation (documented parity gap,"
+      echo "  R22: no field of this CLI's own session record ties to a token count, and no"
+      echo "  vendor-documented alternative channel exposes that granularity today)."
+    else
+      mkdir -p "$(dirname "$STATUSLINE_MARKER")"
+      mkdir -p "$AGY_HOME"
+      [ -f "$AGY_SETTINGS" ] || echo "{}" > "$AGY_SETTINGS"
+      backup_file "$AGY_SETTINGS"
+      jq --arg cmd "$STATUSLINE_ABS" '.statusLine = ((.statusLine // {}) + {command: $cmd})' \
+        "$AGY_SETTINGS" > "${AGY_SETTINGS}.tmp" && mv "${AGY_SETTINGS}.tmp" "$AGY_SETTINGS"
+      jq -n --arg prior "$CURRENT_STATUSLINE" --arg installed "$STATUSLINE_ABS" \
+        '{priorStatusLineCommand: $prior, installedStatusLineCommand: $installed, installedBy: "crewrig-setup-antigravity-interactive"}' \
+        > "${STATUSLINE_MARKER}.tmp" && mv "${STATUSLINE_MARKER}.tmp" "$STATUSLINE_MARKER"
+      echo "  Usage capture wired to $STATUSLINE_ABS (in-repo absolute path)"
+      warn_if_linked_worktree "$REPO_DIR" "usage capture"
+      echo "  Prior statusLine.command (empty) recorded at $STATUSLINE_MARKER"
+    fi
+  else
+    echo "  Antigravity usage capture disabled (can enable later by re-running this script)."
+  fi
 fi
 
 echo ""

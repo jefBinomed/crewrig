@@ -3,9 +3,11 @@
 # preservation-on-setup behaviour (spec 0089).
 #
 # Unit under test: merge_preexisting_mcp_servers() in scripts/lib/common.sh,
-# the single shared helper the three overwrite-based setups (Gemini, Copilot,
+# the single shared helper the two overwrite-based setups (Copilot,
 # Antigravity) call to fold an operator's pre-existing MCP declarations back
-# over the framework-written config. The helper owns the whole policy, so it is
+# over the framework-written config, and that the Gemini setup calls from
+# gemini_settings_write (scripts/lib/gemini-settings.sh) after its in-place
+# merge (spec 0214), for the R9 warnings. The helper owns the whole policy, so it is
 # the hermetic surface for R11 — the interactive scripts themselves cannot run
 # end-to-end in CI (fzf prompts, the `agy` guard, the launchd/systemd chroma
 # daemon), so they are exercised structurally instead (§3, §4).
@@ -19,11 +21,13 @@
 #     pre-existed, while every non-reserved declaration is still retained.
 #   R9 — each reserved-name collision (replace on selection, remove on decline)
 #     emits a non-silent warning naming the server and pointing at the backup.
-#   R11 — asserted per framework-doc shape below AND, for each of the three
-#     scripts, that the operator's pre-run config is CAPTURED BEFORE the
-#     framework overwrite (ordering) and that the capture actually reads the
-#     operator's servers (functional) — a plain call-site grep cannot catch a
-#     mis-timed or wrong-file capture (spec 0089 review F1).
+#   R11 — asserted per framework-doc shape below AND, for the two
+#     overwrite-based scripts, that the operator's pre-run config is CAPTURED
+#     BEFORE the framework overwrite (ordering) and that the capture actually
+#     reads the operator's servers (functional) — a plain call-site grep cannot
+#     catch a mis-timed or wrong-file capture (spec 0089 review F1). Gemini no
+#     longer overwrites: its capture-merge-fold sequence is one library
+#     function, exercised behaviourally by test-setup-gemini-settings-merge.sh.
 #
 # HERMETIC: no HOME writes, no interactive scripts run. Every merge operates on
 # throwaway temp files under a temp root removed on exit.
@@ -103,8 +107,8 @@ assert_absent() {
 # assert_warn <label> <name> — a warning names the server AND points at the backup.
 assert_warn() {
   local label="$1" name="$2"
-  if printf '%s' "$OUT" | grep -q "'$name'" \
-     && printf '%s' "$OUT" | grep -qF "$BACKUP_REF"; then
+  if grep -q "'$name'" <<< "$OUT" \
+     && grep -qF "$BACKUP_REF" <<< "$OUT"; then
     ok "$label: warning names '$name' and points at the backup"
   else
     bad "$label: missing R9 warning for '$name' (out: $OUT)"
@@ -114,7 +118,7 @@ assert_warn() {
 # assert_no_warn <label> <name>
 assert_no_warn() {
   local label="$1" name="$2"
-  if printf '%s' "$OUT" | grep -q "'$name'"; then
+  if grep -q "'$name'" <<< "$OUT"; then
     bad "$label: unexpected warning for '$name'"
   else
     ok "$label: no warning for '$name'"
@@ -221,21 +225,32 @@ check_capture() {
   fi
 }
 
-check_capture setup-gemini-interactive.sh      SETTINGS_TARGET    '${SETTINGS_TARGET}.tmp'
-check_capture setup-copilot-interactive.sh     MCP_CONFIG_TARGET  '${MCP_CONFIG_TARGET}.tmp'
-check_capture setup-antigravity-interactive.sh AGY_MCP_CONFIG     '${AGY_MCP_CONFIG}.tmp'
+check_capture setup-copilot-interactive.sh     MCP_CONFIG_TARGET  'write_json_config_secure_from "$MCP_CONFIG_TARGET"'
+check_capture setup-antigravity-interactive.sh AGY_MCP_CONFIG     'write_json_config_secure_from "$AGY_MCP_CONFIG"'
 
 # ---------------------------------------------------------------------------
-echo "4. Setup-script parity (all three overwrite-based setups call the helper)"
+echo "4. Setup-script parity (all three file setups reach the helper)"
 # ---------------------------------------------------------------------------
-for s in setup-gemini-interactive.sh setup-copilot-interactive.sh \
-         setup-antigravity-interactive.sh; do
+for s in setup-copilot-interactive.sh setup-antigravity-interactive.sh; do
   if grep -q "merge_preexisting_mcp_servers" "$SETUP_DIR/$s"; then
     ok "invokes merge_preexisting_mcp_servers: $s"
   else
     bad "missing merge_preexisting_mcp_servers call: $s"
   fi
 done
+# Gemini (spec 0214): the setup calls gemini_settings_write, and that library
+# function is where the helper is called.
+GEMINI_LIB="$SETUP_DIR/lib/gemini-settings.sh"
+if grep -qE '^[[:space:]]*gemini_settings_write[[:space:]]' "$SETUP_DIR/setup-gemini-interactive.sh"; then
+  ok "invokes gemini_settings_write: setup-gemini-interactive.sh"
+else
+  bad "missing gemini_settings_write call: setup-gemini-interactive.sh"
+fi
+if grep -qE '^[[:space:]]*merge_preexisting_mcp_servers[[:space:]]' "$GEMINI_LIB"; then
+  ok "invokes merge_preexisting_mcp_servers: lib/gemini-settings.sh"
+else
+  bad "missing merge_preexisting_mcp_servers call: lib/gemini-settings.sh"
+fi
 
 # ---------------------------------------------------------------------------
 echo "5. backup_file helper behaviour (spec 0089 R9/R10, issue #982)"
@@ -252,7 +267,7 @@ if [ -n "$LAST_BACKUP_PATH" ] && [ -f "$LAST_BACKUP_PATH" ]; then
 else
   bad "backup_file failed to set valid LAST_BACKUP_PATH (got: '$LAST_BACKUP_PATH')"
 fi
-if printf '%s' "$out_5a" | grep -q "Backed up: valid_src.json ->"; then
+if grep -q "Backed up: valid_src.json ->" <<< "$out_5a"; then
   ok "backup_file reports success on stdout"
 else
   bad "backup_file missing success message on stdout (got: '$out_5a')"
@@ -275,26 +290,47 @@ else
 fi
 
 # 5c. Target cannot be copied (forcing cp failure when writing backup next to target)
+#
+# A `chmod 555` on the directory used to simulate this, but a containerized CI
+# runner as root (UID 0) bypasses Unix permission checks entirely, so under
+# root `cp` would silently succeed and this whole case would turn into a
+# no-op pass (issue #1215). Stub `cp` on PATH instead, scoped to this one
+# invocation of backup_file via a PATH assignment prefix (verified not to leak
+# outside the command it prefixes): any argument under `$no_write_dir` fails
+# deterministically, so both the source being backed up and the sibling
+# backup destination trip it, exactly reproducing the write failure
+# `backup_file` must handle — regardless of the runner's UID.
 no_write_dir="$TMP_ROOT/nowrite_dir"
 mkdir -p "$no_write_dir"
 unwritable_target="$no_write_dir/src.json"
 echo '{"test":1}' > "$unwritable_target"
-chmod 555 "$no_write_dir"
+cp_stub_dir="$TMP_ROOT/cp_stub_bin"
+mkdir -p "$cp_stub_dir"
+real_cp="$(command -v cp)"
+cat > "$cp_stub_dir/cp" <<STUB
+#!/usr/bin/env bash
+for arg in "\$@"; do
+  case "\$arg" in
+    "${no_write_dir}"/*) exit 1 ;;
+  esac
+done
+exec "${real_cp}" "\$@"
+STUB
+chmod +x "$cp_stub_dir/cp"
 out_5c_file="$TMP_ROOT/out_5c.txt"
-backup_file "$unwritable_target" > "$out_5c_file" 2>&1
+PATH="$cp_stub_dir:$PATH" backup_file "$unwritable_target" > "$out_5c_file" 2>&1
 out_5c="$(cat "$out_5c_file")"
-chmod 755 "$no_write_dir"
 if [ -z "$LAST_BACKUP_PATH" ]; then
   ok "backup_file leaves LAST_BACKUP_PATH empty when cp fails (issue #982)"
 else
   bad "backup_file published nonexistent LAST_BACKUP_PATH on failure (got: '$LAST_BACKUP_PATH')"
 fi
-if printf '%s' "$out_5c" | grep -q "WARNING: Failed to back up src.json"; then
+if grep -q "WARNING: Failed to back up src.json" <<< "$out_5c"; then
   ok "backup_file emits warning on stderr when backup fails"
 else
   bad "backup_file missing failure warning (got: '$out_5c')"
 fi
-if printf '%s' "$out_5c" | grep -q "Backed up:"; then
+if grep -q "Backed up:" <<< "$out_5c"; then
   bad "backup_file falsely reported success when copy failed"
 else
   ok "backup_file does not falsely report success when copy fails"
@@ -312,6 +348,50 @@ if [ -n "$LAST_BACKUP_PATH" ] && [ -L "$LAST_BACKUP_PATH" ]; then
   ok "backup_file preserves symlink on backup (-P)"
 else
   bad "backup_file failed to preserve symlink as backup (got: '$LAST_BACKUP_PATH')"
+fi
+
+# 5e. Same-second collision: two backup_file calls on the same target within
+# the same wall-clock second must not silently overwrite the first backup
+# (issue #1246). `date` is stubbed on PATH, scoped to each backup_file call
+# (same technique as 5c's `cp` stub), so both calls resolve to the identical
+# fixed stamp regardless of real time, forcing a deterministic collision.
+date_stub_dir="$TMP_ROOT/date_stub_bin"
+mkdir -p "$date_stub_dir"
+cat > "$date_stub_dir/date" <<'STUB'
+#!/usr/bin/env bash
+echo "20260101-120000"
+STUB
+chmod +x "$date_stub_dir/date"
+
+collision_target="$TMP_ROOT/collision_src.json"
+echo -n 'A' > "$collision_target"
+first_backup="${collision_target}.bak.20260101-120000"
+second_backup="${collision_target}.bak.20260101-120000.01"
+
+PATH="$date_stub_dir:$PATH" backup_file "$collision_target" >/dev/null 2>&1
+if [ "$LAST_BACKUP_PATH" = "$first_backup" ]; then
+  ok "backup_file (issue #1246): first same-second backup keeps the unsuffixed name"
+else
+  bad "backup_file (issue #1246): expected first backup at '$first_backup', got LAST_BACKUP_PATH='$LAST_BACKUP_PATH'"
+fi
+
+echo -n 'B' > "$collision_target"
+PATH="$date_stub_dir:$PATH" backup_file "$collision_target" >/dev/null 2>&1
+
+if [ -f "$first_backup" ] && [ "$(cat "$first_backup")" = 'A' ]; then
+  ok "backup_file (issue #1246): first backup survives the second call's same-second collision"
+else
+  bad "backup_file (issue #1246): first backup was overwritten by the collision (got: '$(cat "$first_backup" 2>/dev/null)')"
+fi
+if [ -f "$second_backup" ] && [ "$(cat "$second_backup")" = 'B' ]; then
+  ok "backup_file (issue #1246): collision gets a distinctly-named second backup ('.01')"
+else
+  bad "backup_file (issue #1246): expected a distinct second backup at '$second_backup'"
+fi
+if [ "$LAST_BACKUP_PATH" = "$second_backup" ]; then
+  ok "backup_file (issue #1246): LAST_BACKUP_PATH points at the second backup after collision"
+else
+  bad "backup_file (issue #1246): LAST_BACKUP_PATH expected '$second_backup', got '$LAST_BACKUP_PATH'"
 fi
 
 # ---------------------------------------------------------------------------

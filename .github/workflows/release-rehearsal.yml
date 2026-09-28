@@ -1,0 +1,37 @@
+name: Rehearse Release (Monorepo)
+
+# Manual, credential-free rehearsal of the monorepo release (spec 0213 R12):
+# computes each extension's next version, tag and release note and builds its
+# archive, publishing nothing. Mirrors the `release-rehearsal` capability in
+# ci/ci-capabilities.yml.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-rehearsal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Install dependencies
+        run: npm install --include=dev
+
+      - name: Rehearse monorepo release
+        env:
+          RELEASE_DRY_RUN: "true"
+        run: bash scripts/monorepo-release.sh

@@ -40,34 +40,48 @@ component-drift:
       files:
         - "scripts/build-components.sh"
         - "scripts/test-build-components.sh"
+        - "scripts/tests/test-model-resolution.sh"
+        - "scripts/tests/test-agent-profile-migration.sh"
         - "scripts/lib/**"
         - "artifacts/**"
         - "extensions/**"
         - ".crewrig/core-paths.txt"
+        - "docs/agent-profile-migration.md"
+        - "model-mappings/**"
     paths:
       - .ci-cache/
   script:
-    - "bash scripts/ci-cache-guard.sh --cache-dir .ci-cache --key-files \"scripts/build-components.sh,scripts/test-build-components.sh,scripts/lib/**,artifacts/**,extensions/**,.crewrig/core-paths.txt\" --key-env \"\" -- bash scripts/build-components.sh --target all --check"
-    - "bash scripts/ci-cache-guard.sh --cache-dir .ci-cache --key-files \"scripts/build-components.sh,scripts/test-build-components.sh,scripts/lib/**,artifacts/**,extensions/**,.crewrig/core-paths.txt\" --key-env \"\" -- bash scripts/test-build-components.sh"
+    - "bash scripts/ci-cache-guard.sh --cache-dir .ci-cache --key-files \"scripts/build-components.sh,scripts/test-build-components.sh,scripts/tests/test-model-resolution.sh,scripts/tests/test-agent-profile-migration.sh,scripts/lib/**,artifacts/**,extensions/**,.crewrig/core-paths.txt,docs/agent-profile-migration.md,model-mappings/**\" --key-env \"\" -- bash scripts/build-components.sh --target all --check"
+    - "bash scripts/ci-cache-guard.sh --cache-dir .ci-cache --key-files \"scripts/build-components.sh,scripts/test-build-components.sh,scripts/tests/test-model-resolution.sh,scripts/tests/test-agent-profile-migration.sh,scripts/lib/**,artifacts/**,extensions/**,.crewrig/core-paths.txt,docs/agent-profile-migration.md,model-mappings/**\" --key-env \"\" -- bash scripts/test-build-components.sh"
+    - "bash scripts/ci-cache-guard.sh --cache-dir .ci-cache --key-files \"scripts/build-components.sh,scripts/test-build-components.sh,scripts/tests/test-model-resolution.sh,scripts/tests/test-agent-profile-migration.sh,scripts/lib/**,artifacts/**,extensions/**,.crewrig/core-paths.txt,docs/agent-profile-migration.md,model-mappings/**\" --key-env \"\" -- bash scripts/tests/test-model-resolution.sh"
+    - "bash scripts/ci-cache-guard.sh --cache-dir .ci-cache --key-files \"scripts/build-components.sh,scripts/test-build-components.sh,scripts/tests/test-model-resolution.sh,scripts/tests/test-agent-profile-migration.sh,scripts/lib/**,artifacts/**,extensions/**,.crewrig/core-paths.txt,docs/agent-profile-migration.md,model-mappings/**\" --key-env \"\" -- bash scripts/tests/test-agent-profile-migration.sh"
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME =~ /^main$|^release\//'
       changes:
         - "scripts/build-components.sh"
         - "scripts/test-build-components.sh"
+        - "scripts/tests/test-model-resolution.sh"
+        - "scripts/tests/test-agent-profile-migration.sh"
         - "scripts/lib/**"
         - "artifacts/**"
         - "extensions/**"
         - ".crewrig/core-paths.txt"
         - "docs/layers.md"
+        - "docs/agent-profile-migration.md"
+        - "model-mappings/**"
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^main$|^release\//'
       changes:
         - "scripts/build-components.sh"
         - "scripts/test-build-components.sh"
+        - "scripts/tests/test-model-resolution.sh"
+        - "scripts/tests/test-agent-profile-migration.sh"
         - "scripts/lib/**"
         - "artifacts/**"
         - "extensions/**"
         - ".crewrig/core-paths.txt"
         - "docs/layers.md"
+        - "docs/agent-profile-migration.md"
+        - "model-mappings/**"
 
 extension-render:
   image: debian:stable-slim
@@ -205,6 +219,8 @@ extension-manifest:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME =~ /^main$|^release\//'
       changes:
         - "scripts/check-extension-manifest-version.sh"
+        - "scripts/check-extension-version-bump.sh"
+        - "scripts/lib/base-ref-resolve.sh"
         - "scripts/tests/test-check-extension-manifest-version.sh"
         - "scripts/tests/test-check-extension-version-bump.sh"
         - "extensions/**"
@@ -212,6 +228,8 @@ extension-manifest:
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^main$|^release\//'
       changes:
         - "scripts/check-extension-manifest-version.sh"
+        - "scripts/check-extension-version-bump.sh"
+        - "scripts/lib/base-ref-resolve.sh"
         - "scripts/tests/test-check-extension-manifest-version.sh"
         - "scripts/tests/test-check-extension-version-bump.sh"
         - "extensions/**"
@@ -266,17 +284,21 @@ core-paths:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME =~ /^main$|^release\//'
       changes:
         - "scripts/check-core-paths.sh"
+        - "scripts/sync-from-upstream.sh"
         - "scripts/tests/test-check-core-paths.sh"
         - "scripts/tests/test-sync-from-upstream.sh"
         - ".crewrig/core-paths.txt"
         - "docs/layers.md"
+        - "model-mappings/**"
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^main$|^release\//'
       changes:
         - "scripts/check-core-paths.sh"
+        - "scripts/sync-from-upstream.sh"
         - "scripts/tests/test-check-core-paths.sh"
         - "scripts/tests/test-sync-from-upstream.sh"
         - ".crewrig/core-paths.txt"
         - "docs/layers.md"
+        - "model-mappings/**"
 
 ci-parity:
   image: debian:stable-slim
@@ -552,6 +574,7 @@ e2e:
     - "bash scripts/tests/test-e2e-judge-config.sh"
     - "bash scripts/tests/test-e2e-libs-readme.sh"
     - "bash scripts/tests/test-e2e-llm-judge-lib.sh"
+    - "bash scripts/tests/test-e2e-probes.sh"
     - "bash scripts/tests/test-e2e-readme.sh"
     - "bash scripts/tests/test-e2e-report.sh"
     - "bash scripts/tests/test-e2e-runner-delegation.sh"
@@ -568,16 +591,20 @@ e2e:
       changes:
         - "scripts/tests/test-e2e-*.sh"
         - "tests/e2e/**"
+        - "scripts/e2e/**"
+        - "docs/cli-matrix.md"
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^main$|^release\//'
       changes:
         - "scripts/tests/test-e2e-*.sh"
         - "tests/e2e/**"
-    - if: ''
-      when: manual
+        - "scripts/e2e/**"
+        - "docs/cli-matrix.md"
+    - when: manual
 
 setup:
   image: debian:stable-slim
   before_script:
+    - apt-get update && apt-get install -y --no-install-recommends jq
     - apt-get update && apt-get install -y --no-install-recommends wget ca-certificates
     - wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
     - chmod +x /usr/local/bin/yq
@@ -585,11 +612,14 @@ setup:
     - "bash scripts/tests/test-setup-validation-backend.sh"
     - "bash scripts/tests/test-tls-delegation.sh"
     - "bash scripts/tests/test-setup-mcp-merge.sh"
+    - "bash scripts/tests/test-setup-mempalace-rc-guard.sh"
     - "bash scripts/tests/test-setup-org-mcp.sh"
+    - "bash scripts/tests/test-setup-mcp-fold-secrets-argv.sh"
     - "bash scripts/tests/test-setup-catalogue-picker.sh"
     - "bash scripts/tests/test-setup-ensure-tier-built.sh"
     - "bash scripts/tests/test-setup-gemini-md-cleanup.sh"
     - "bash scripts/tests/test-setup-init-command-instructions.sh"
+    - "bash scripts/tests/test-setup-gemini-settings-merge.sh"
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME =~ /^main$|^release\//'
       changes:
@@ -612,6 +642,7 @@ misc:
     - "bash scripts/check-gemini-overlay-enrollment.sh"
     - "bash scripts/tests/test-check-gemini-overlay-enrollment.sh"
     - "bash scripts/tests/test-check-bash32-portability.sh"
+    - "bash scripts/tests/test-check-pipefail-grep.sh"
     - "bash scripts/tests/test-reserve-spec-id.sh"
     - "bash scripts/tests/test-check-spec-id-reserved.sh"
   rules:
@@ -622,10 +653,14 @@ misc:
         - "scripts/check-gemini-overlay-enrollment.sh"
         - "scripts/tests/test-check-gemini-overlay-enrollment.sh"
         - "scripts/tests/test-check-bash32-portability.sh"
+        - "scripts/check-pipefail-grep.sh"
+        - "scripts/tests/test-check-pipefail-grep.sh"
         - "scripts/tests/test-reserve-spec-id.sh"
         - "scripts/tests/test-check-spec-id-reserved.sh"
         - "scripts/reserve-spec-id.sh"
         - "scripts/check-spec-id-reserved.sh"
+        - "scripts/lib/base-ref-resolve.sh"
+        - "model-mappings/**"
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^main$|^release\//'
       changes:
         - "scripts/check-no-machine-paths.sh"
@@ -633,10 +668,14 @@ misc:
         - "scripts/check-gemini-overlay-enrollment.sh"
         - "scripts/tests/test-check-gemini-overlay-enrollment.sh"
         - "scripts/tests/test-check-bash32-portability.sh"
+        - "scripts/check-pipefail-grep.sh"
+        - "scripts/tests/test-check-pipefail-grep.sh"
         - "scripts/tests/test-reserve-spec-id.sh"
         - "scripts/tests/test-check-spec-id-reserved.sh"
         - "scripts/reserve-spec-id.sh"
         - "scripts/check-spec-id-reserved.sh"
+        - "scripts/lib/base-ref-resolve.sh"
+        - "model-mappings/**"
 
 frontmatter:
   image: debian:stable-slim
@@ -656,6 +695,7 @@ frontmatter:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME =~ /^main$|^release\//'
       changes:
         - "scripts/tests/test-extract-frontmatter.sh"
+        - "scripts/check-skill-versions.sh"
         - "scripts/tests/test-check-skill-versions.sh"
         - "scripts/tests/test-check-feedback-routing.sh"
         - "scripts/tests/test-assembly-verification.sh"
@@ -667,6 +707,7 @@ frontmatter:
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^main$|^release\//'
       changes:
         - "scripts/tests/test-extract-frontmatter.sh"
+        - "scripts/check-skill-versions.sh"
         - "scripts/tests/test-check-skill-versions.sh"
         - "scripts/tests/test-check-feedback-routing.sh"
         - "scripts/tests/test-assembly-verification.sh"
@@ -675,6 +716,90 @@ frontmatter:
         - "scripts/tests/test-pr-logbook-label-scope.sh"
         - "scripts/lib/**"
         - "artifacts/**"
+
+check-model-mappings:
+  image: debian:stable-slim
+  before_script:
+    - apt-get update && apt-get install -y --no-install-recommends wget ca-certificates
+    - wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+    - chmod +x /usr/local/bin/yq
+  script:
+    - "bash scripts/check-model-mappings.sh"
+    - "bash scripts/tests/test-check-model-mappings.sh"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME =~ /^main$|^release\//'
+      changes:
+        - "model-mappings/**"
+        - "docs/model-mapping-format.md"
+        - "scripts/check-model-mappings.sh"
+        - "scripts/tests/test-check-model-mappings.sh"
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^main$|^release\//'
+      changes:
+        - "model-mappings/**"
+        - "docs/model-mapping-format.md"
+        - "scripts/check-model-mappings.sh"
+        - "scripts/tests/test-check-model-mappings.sh"
+
+check-agent-profiles:
+  image: debian:stable-slim
+  before_script:
+    - apt-get update && apt-get install -y --no-install-recommends wget ca-certificates
+    - wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+    - chmod +x /usr/local/bin/yq
+  script:
+    - "bash scripts/check-agent-profiles.sh"
+    - "bash scripts/tests/test-check-agent-profiles.sh"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME =~ /^main$|^release\//'
+      changes:
+        - "artifacts/**"
+        - "scripts/check-agent-profiles.sh"
+        - "scripts/tests/test-check-agent-profiles.sh"
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^main$|^release\//'
+      changes:
+        - "artifacts/**"
+        - "scripts/check-agent-profiles.sh"
+        - "scripts/tests/test-check-agent-profiles.sh"
+
+check-metadata-keys:
+  image: debian:stable-slim
+  before_script:
+    - apt-get update && apt-get install -y --no-install-recommends wget ca-certificates
+    - wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+    - chmod +x /usr/local/bin/yq
+  script:
+    - "bash scripts/check-component-metadata-keys.sh"
+    - "bash scripts/tests/test-check-component-metadata-keys.sh"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME =~ /^main$|^release\//'
+      changes:
+        - "artifacts/**"
+        - "scripts/check-component-metadata-keys.sh"
+        - "scripts/tests/test-check-component-metadata-keys.sh"
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^main$|^release\//'
+      changes:
+        - "artifacts/**"
+        - "scripts/check-component-metadata-keys.sh"
+        - "scripts/tests/test-check-component-metadata-keys.sh"
+
+check-claude-agent-layout:
+  image: debian:stable-slim
+  script:
+    - "bash scripts/check-claude-agent-layout.sh"
+    - "bash scripts/tests/test-check-claude-agent-layout.sh"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME =~ /^main$|^release\//'
+      changes:
+        - ".claude/agents/**"
+        - "scripts/check-claude-agent-layout.sh"
+        - "scripts/tests/test-check-claude-agent-layout.sh"
+        - "scripts/build-components.sh"
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^main$|^release\//'
+      changes:
+        - ".claude/agents/**"
+        - "scripts/check-claude-agent-layout.sh"
+        - "scripts/tests/test-check-claude-agent-layout.sh"
+        - "scripts/build-components.sh"
 
 markdown-links:
   image: python:3.12
@@ -718,6 +843,28 @@ lint-markdown:
   script:
     - "npm install -g markdownlint-cli"
     - "markdownlint \"**/*.md\" --ignore node_modules --ignore extension-skeleton --ignore communication --ignore 'extensions/**/commands/*.md' --ignore 'artifacts/*/commands/*.md'"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME =~ /^main$|^release\//'
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^main$|^release\//'
+
+ratchet:
+  image: node:24
+  variables:
+    GIT_DEPTH: "0"
+    BASE_REF: "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+  script:
+    - "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tests/check-ratchet.test.ts"
+    - "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-ratchet.ts"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME =~ /^main$|^release\//'
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^main$|^release\//'
+
+lint-typescript:
+  image: node:24
+  script:
+    - "npm ci"
+    - "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tests/check-erasable-syntax.test.ts scripts/tests/lint-typescript.test.ts scripts/tests/check-typescript.test.ts"
+    - "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-typescript.ts"
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME =~ /^main$|^release\//'
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^main$|^release\//'
@@ -826,6 +973,7 @@ grep-anti-patterns:
         fi
         echo "Rule 1 clean."
     - "bash scripts/check-bash32-portability.sh"
+    - "bash scripts/check-pipefail-grep.sh"
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME =~ /^main$|^release\//'
       changes:
@@ -846,6 +994,254 @@ audit:
         - "**/mcp.json"
         - "**/mcp.json.template"
         - "**/extension.json"
+
+usage-record-schema:
+  image: node:22
+  script:
+    - "npm install"
+    - "bash scripts/tests/test-usage-record-schema.sh"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME =~ /^main$|^release\//'
+      changes:
+        - "schemas/**"
+        - "scripts/lib/usage-record-validator.js"
+        - "scripts/tests/test-usage-record-schema.sh"
+        - "scripts/tests/fixtures/usage-records/**"
+        - "package.json"
+        - "package-lock.json"
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^main$|^release\//'
+      changes:
+        - "schemas/**"
+        - "scripts/lib/usage-record-validator.js"
+        - "scripts/tests/test-usage-record-schema.sh"
+        - "scripts/tests/fixtures/usage-records/**"
+        - "package.json"
+        - "package-lock.json"
+
+release-notes:
+  image: node:22
+  before_script:
+    - apt-get update && apt-get install -y --no-install-recommends jq
+  script:
+    - "npm ci"
+    - "bash scripts/tests/test-monorepo-release-notes.sh"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME =~ /^main$|^release\//'
+      changes:
+        - "scripts/monorepo-release.sh"
+        - "scripts/lib/release-notes/**"
+        - "scripts/lib/monorepo-release-lib.sh"
+        - "scripts/tests/test-monorepo-release-notes.sh"
+        - "package.json"
+        - "package-lock.json"
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^main$|^release\//'
+      changes:
+        - "scripts/monorepo-release.sh"
+        - "scripts/lib/release-notes/**"
+        - "scripts/lib/monorepo-release-lib.sh"
+        - "scripts/tests/test-monorepo-release-notes.sh"
+        - "package.json"
+        - "package-lock.json"
+
+usage-capture:
+  image: node:22
+  script:
+    - "npm install"
+    - "bash scripts/tests/test-usage-capture.sh"
+    - "bash scripts/tests/test-setup-usage-capture-optin.sh"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME =~ /^main$|^release\//'
+      changes:
+        - "hooks/usage-capture.sh"
+        - "hooks/antigravity-statusline-shim.sh"
+        - "hooks/claude-transcript-hooks.json"
+        - "hooks/gemini-transcript-hooks.json"
+        - "hooks/copilot-transcript-hooks.json"
+        - "scripts/lib/usage-capture/**"
+        - "scripts/lib/usage-headless.sh"
+        - "scripts/usage-backfill.sh"
+        - "scripts/tests/test-usage-capture.sh"
+        - "scripts/tests/fixtures/usage-capture/**"
+        - "hooks/claude-usage-capture-hooks.json"
+        - "hooks/gemini-usage-capture-hooks.json"
+        - "hooks/copilot-usage-capture-hooks.json"
+        - "scripts/lib/usage-capture-optin.sh"
+        - "scripts/lib/common.sh"
+        - "scripts/setup-claude-interactive.sh"
+        - "scripts/setup-gemini-interactive.sh"
+        - "scripts/setup-copilot-interactive.sh"
+        - "scripts/tests/test-setup-usage-capture-optin.sh"
+        - "scripts/tests/fixtures/setup-usage-capture/**"
+        - "package.json"
+        - "package-lock.json"
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^main$|^release\//'
+      changes:
+        - "hooks/usage-capture.sh"
+        - "hooks/antigravity-statusline-shim.sh"
+        - "hooks/claude-transcript-hooks.json"
+        - "hooks/gemini-transcript-hooks.json"
+        - "hooks/copilot-transcript-hooks.json"
+        - "scripts/lib/usage-capture/**"
+        - "scripts/lib/usage-headless.sh"
+        - "scripts/usage-backfill.sh"
+        - "scripts/tests/test-usage-capture.sh"
+        - "scripts/tests/fixtures/usage-capture/**"
+        - "hooks/claude-usage-capture-hooks.json"
+        - "hooks/gemini-usage-capture-hooks.json"
+        - "hooks/copilot-usage-capture-hooks.json"
+        - "scripts/lib/usage-capture-optin.sh"
+        - "scripts/lib/common.sh"
+        - "scripts/setup-claude-interactive.sh"
+        - "scripts/setup-gemini-interactive.sh"
+        - "scripts/setup-copilot-interactive.sh"
+        - "scripts/tests/test-setup-usage-capture-optin.sh"
+        - "scripts/tests/fixtures/setup-usage-capture/**"
+        - "package.json"
+        - "package-lock.json"
+
+usage-storage:
+  image: node:22
+  script:
+    - "npm install"
+    - "bash scripts/tests/test-usage-storage.sh"
+    - "bash scripts/tests/test-usage-storage-mirror.sh"
+    - "node scripts/build-usage-validator.js --check"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME =~ /^main$|^release\//'
+      changes:
+        - "scripts/lib/usage-store/**"
+        - "scripts/usage-query.sh"
+        - "scripts/usage-prune.sh"
+        - "scripts/usage-mirror.sh"
+        - "scripts/usage-drain.sh"
+        - "scripts/usage-task.sh"
+        - "scripts/usage-attribute.sh"
+        - "scripts/usage-backfill.sh"
+        - "scripts/build-usage-validator.js"
+        - "scripts/tests/test-usage-storage*.sh"
+        - "scripts/tests/fixtures/usage-storage/**"
+        - "schemas/**"
+        - "package.json"
+        - "package-lock.json"
+        - "docs/usage-storage.md"
+        - "docs/usage-organization.md"
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^main$|^release\//'
+      changes:
+        - "scripts/lib/usage-store/**"
+        - "scripts/usage-query.sh"
+        - "scripts/usage-prune.sh"
+        - "scripts/usage-mirror.sh"
+        - "scripts/usage-drain.sh"
+        - "scripts/usage-task.sh"
+        - "scripts/usage-attribute.sh"
+        - "scripts/usage-backfill.sh"
+        - "scripts/build-usage-validator.js"
+        - "scripts/tests/test-usage-storage*.sh"
+        - "scripts/tests/fixtures/usage-storage/**"
+        - "schemas/**"
+        - "package.json"
+        - "package-lock.json"
+        - "docs/usage-storage.md"
+        - "docs/usage-organization.md"
+
+usage-attribution:
+  image: node:22
+  script:
+    - "npm install"
+    - "bash scripts/tests/test-usage-attribution.sh"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME =~ /^main$|^release\//'
+      changes:
+        - "scripts/lib/usage-store/**"
+        - "scripts/lib/usage-capture/**"
+        - "scripts/usage-task.sh"
+        - "scripts/usage-attribute.sh"
+        - "scripts/tests/test-usage-attribution.sh"
+        - "scripts/tests/fixtures/usage-attribution/**"
+        - "docs/usage-attribution.md"
+        - "schemas/**"
+        - "package.json"
+        - "package-lock.json"
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^main$|^release\//'
+      changes:
+        - "scripts/lib/usage-store/**"
+        - "scripts/lib/usage-capture/**"
+        - "scripts/usage-task.sh"
+        - "scripts/usage-attribute.sh"
+        - "scripts/tests/test-usage-attribution.sh"
+        - "scripts/tests/fixtures/usage-attribution/**"
+        - "docs/usage-attribution.md"
+        - "schemas/**"
+        - "package.json"
+        - "package-lock.json"
+
+usage-pricing:
+  image: node:22
+  script:
+    - "npm install"
+    - "bash scripts/tests/test-usage-pricing.sh"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME =~ /^main$|^release\//'
+      changes:
+        - "scripts/lib/usage-price/**"
+        - "scripts/usage-price.sh"
+        - "scripts/tests/test-usage-pricing*.sh"
+        - "scripts/tests/fixtures/usage-pricing/**"
+        - "model-prices.org.json"
+        - "scripts/lib/usage-store/**"
+        - "package.json"
+        - "package-lock.json"
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^main$|^release\//'
+      changes:
+        - "scripts/lib/usage-price/**"
+        - "scripts/usage-price.sh"
+        - "scripts/tests/test-usage-pricing*.sh"
+        - "scripts/tests/fixtures/usage-pricing/**"
+        - "model-prices.org.json"
+        - "scripts/lib/usage-store/**"
+        - "package.json"
+        - "package-lock.json"
+
+usage-dashboard:
+  image: node:22
+  script:
+    - "npm install"
+    - "bash scripts/tests/test-usage-dashboard.sh"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME =~ /^main$|^release\//'
+      changes:
+        - "scripts/lib/usage-dashboard/**"
+        - "scripts/usage-dashboard.sh"
+        - "scripts/tests/test-usage-dashboard*.sh"
+        - "scripts/tests/fixtures/usage-dashboard/**"
+        - "scripts/tests/fixtures/usage-pricing/**"
+        - "model-prices.org.json"
+        - "scripts/lib/usage-store/**"
+        - "scripts/lib/usage-price/**"
+        - "scripts/usage-query.sh"
+        - "scripts/usage-price.sh"
+        - "scripts/usage-attribute.sh"
+        - "scripts/usage-prune.sh"
+        - "schemas/usage-record/**"
+        - "package.json"
+        - "package-lock.json"
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^main$|^release\//'
+      changes:
+        - "scripts/lib/usage-dashboard/**"
+        - "scripts/usage-dashboard.sh"
+        - "scripts/tests/test-usage-dashboard*.sh"
+        - "scripts/tests/fixtures/usage-dashboard/**"
+        - "scripts/tests/fixtures/usage-pricing/**"
+        - "model-prices.org.json"
+        - "scripts/lib/usage-store/**"
+        - "scripts/lib/usage-price/**"
+        - "scripts/usage-query.sh"
+        - "scripts/usage-price.sh"
+        - "scripts/usage-attribute.sh"
+        - "scripts/usage-prune.sh"
+        - "schemas/usage-record/**"
+        - "package.json"
+        - "package-lock.json"
 
 gitlab-ci-check:
   image: debian:stable-slim
@@ -870,3 +1266,77 @@ check-ci-parity:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME =~ /^main$|^release\//'
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^main$|^release\//'
+
+release:
+  image: node:22
+  variables:
+    GIT_DEPTH: "0"
+    RELEASE_TOKEN: "$GITLAB_TOKEN"
+  before_script:
+    - apt-get update && apt-get install -y --no-install-recommends jq
+    - apt-get update && apt-get install -y --no-install-recommends wget ca-certificates
+    - wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+    - chmod +x /usr/local/bin/yq
+  script:
+    - "npm install --include=dev"
+    - "bash scripts/monorepo-release.sh"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^main$/'
+
+release-rehearsal:
+  image: node:22
+  variables:
+    GIT_DEPTH: "0"
+    RELEASE_DRY_RUN: "true"
+  before_script:
+    - apt-get update && apt-get install -y --no-install-recommends jq
+    - apt-get update && apt-get install -y --no-install-recommends wget ca-certificates
+    - wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+    - chmod +x /usr/local/bin/yq
+  script:
+    - "npm install --include=dev"
+    - "bash scripts/monorepo-release.sh"
+  rules:
+    - when: manual
+
+release-tests:
+  image: node:22
+  before_script:
+    - apt-get update && apt-get install -y --no-install-recommends jq
+    - apt-get update && apt-get install -y --no-install-recommends wget ca-certificates
+    - wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+    - chmod +x /usr/local/bin/yq
+  script:
+    - "npm install --include=dev"
+    - "bash scripts/tests/test-monorepo-release.sh"
+    - "bash scripts/tests/test-monorepo-release-engine.sh"
+    - "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tests/release-changelog.test.ts"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME =~ /^main$|^release\//'
+      changes:
+        - "scripts/monorepo-release.sh"
+        - "scripts/lib/monorepo-release-lib.sh"
+        - "scripts/lib/release-rehearse.mjs"
+        - "scripts/lib/release-notes/**"
+        - "scripts/tests/test-monorepo-release*.sh"
+        - "scripts/tests/release-changelog.test.ts"
+        - ".markdownlintrc"
+        - "scripts/tests/fixtures/release/**"
+        - "scripts/release-package-extension.sh"
+        - "scripts/build-extension.sh"
+        - "package.json"
+        - "package-lock.json"
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^main$|^release\//'
+      changes:
+        - "scripts/monorepo-release.sh"
+        - "scripts/lib/monorepo-release-lib.sh"
+        - "scripts/lib/release-rehearse.mjs"
+        - "scripts/lib/release-notes/**"
+        - "scripts/tests/test-monorepo-release*.sh"
+        - "scripts/tests/release-changelog.test.ts"
+        - ".markdownlintrc"
+        - "scripts/tests/fixtures/release/**"
+        - "scripts/release-package-extension.sh"
+        - "scripts/build-extension.sh"
+        - "package.json"
+        - "package-lock.json"

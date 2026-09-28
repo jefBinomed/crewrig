@@ -4,6 +4,10 @@ set -e
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 # shellcheck source=scripts/lib/tls-delegation.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/tls-delegation.sh"
+# shellcheck source=scripts/lib/usage-capture-optin.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/usage-capture-optin.sh"
+# shellcheck source=scripts/lib/gemini-settings.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/gemini-settings.sh"
 
 GEMINI_HOME="${HOME}/.gemini"
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -156,19 +160,14 @@ fi  # end: SKIP_RULES_CONFIG guard for shared configuration
 offer_tls_delegation
 echo ""
 
-# --- settings.json install + MCP server patching ---
+# --- settings.json merge + MCP server registration (spec 0214) ---
+# The existing ~/.gemini/settings.json is merged in place, never rebuilt from
+# config/gemini/settings.json: every operator key and every hook entry is kept,
+# and only the context-file list and the reserved MCP entries are
+# framework-owned. The whole write lives in scripts/lib/gemini-settings.sh.
 echo "Configuring ~/.gemini/settings.json..."
 SETTINGS_TARGET="$GEMINI_HOME/settings.json"
 SETTINGS_SRC="$REPO_DIR/config/gemini/settings.json"
-
-backup_file "$SETTINGS_TARGET"
-
-# Capture the operator's pre-existing MCP declarations + the backup path BEFORE
-# the framework overwrites settings.json, so non-reserved servers can be folded
-# back in after the write (spec 0089 R2/R4). Must run before the template copy
-# below, never after — see merge_preexisting_mcp_servers in common.sh.
-PREEXISTING_MCP="$(jq -c '.mcpServers // {}' "$SETTINGS_TARGET" 2>/dev/null || echo '{}')"
-MCP_BACKUP="$LAST_BACKUP_PATH"
 
 # Detect MemPalace Python interpreter (used to patch mcpServers.mempalace.command)
 MEMPALACE_PYTHON_BIN="$(detect_mempalace_python || true)"
@@ -189,60 +188,51 @@ if [ -n "$MEMPALACE_PYTHON_BIN" ]; then
 fi
 
 # MemPalace is detected → HTTP by default (spec 0113 delta-02 R17): the
-# patched stdio template is written unconditionally and the shared-daemon
-# HTTP registration below replaces it. No opt-in prompt remains; the
-# mempalace-out branch below only handles MemPalace-absent, which registers
-# nothing, as before.
+# stdio-shaped reserved entry is written by the merge below and the
+# shared-daemon HTTP registration further down replaces it. No opt-in prompt
+# remains; MemPalace-absent registers nothing, as before.
 if [ -n "$MEMPALACE_PYTHON_BIN" ]; then
   # Install the shared ChromaDB HTTP daemon supervisor (issue #98) before
   # writing the wrapper into settings.json — first-launch ordering matters.
   install_chroma_daemon "$REPO_DIR"
-
-  # Copy template, then patch mcpServers.mempalace.command with the detected
-  # python and substitute the __CREWRIG_REPO_DIR__ placeholder in args with
-  # the repo root so the http-wrapper resolves to an absolute path.
-  jq --arg tlsexec "$REPO_DIR/scripts/lib/tls-exec.sh" --arg py "$MEMPALACE_PYTHON_BIN" --arg repo "$REPO_DIR" \
-    '.mcpServers.mempalace.command = "bash"
-     | .mcpServers.mempalace.args = ([$tlsexec, $py]
-         + (.mcpServers.mempalace.args | map(gsub("__CREWRIG_REPO_DIR__"; $repo))))' \
-    "$SETTINGS_SRC" > "${SETTINGS_TARGET}.tmp" && mv "${SETTINGS_TARGET}.tmp" "$SETTINGS_TARGET"
-  echo "  Installed: settings.json (mempalace patched with detected Python + wrapper path)"
   MEMPALACE_INSTALLED=1
 else
-  # Copy template with mempalace removed from mcpServers
-  jq 'del(.mcpServers.mempalace)' \
-    "$SETTINGS_SRC" > "${SETTINGS_TARGET}.tmp" && mv "${SETTINGS_TARGET}.tmp" "$SETTINGS_TARGET"
-  echo "  Installed: settings.json (mempalace omitted from mcpServers)"
   MEMPALACE_INSTALLED=0
 fi
 
-# Route the sequentialthinking MCP server through tls-exec.sh so its npx package
-# fetch inherits custom-CA trust when consented (spec 0084 R2/R9). Runs in both
-# the mempalace-in and mempalace-out branches.
-jq --arg tlsexec "$REPO_DIR/scripts/lib/tls-exec.sh" '
-  if .mcpServers.sequentialthinking then
-    .mcpServers.sequentialthinking.args = ([$tlsexec, .mcpServers.sequentialthinking.command]
-      + .mcpServers.sequentialthinking.args)
-    | .mcpServers.sequentialthinking.command = "bash"
-  else . end' \
-  "$SETTINGS_TARGET" > "${SETTINGS_TARGET}.tmp" && mv "${SETTINGS_TARGET}.tmp" "$SETTINGS_TARGET"
-
-# Fold the operator's pre-existing non-reserved MCP servers back over the
-# framework config (spec 0089). Framework reserved entries (mempalace /
-# sequentialthinking) — including their spec-0084 TLS wrapping — are untouched.
-merge_preexisting_mcp_servers "$PREEXISTING_MCP" "$SETTINGS_TARGET" "$MCP_BACKUP"
-
-# Fold org-declared MCP servers (spec 0091) over the just-merged config, AFTER
-# the 0089 operator fold, so precedence is framework-reserved > org > operator.
-# Guarded on manifest presence, like the AGENTS.org.md fan-out.
+# Org-declared MCP servers (spec 0091), folded by the merge AFTER the spec 0089
+# operator fold, so precedence is framework-reserved > org > operator. Guarded
+# on manifest presence, like the AGENTS.org.md fan-out.
+ORG_MCP_NATIVE=""
 ORG_MCP_MANIFEST="$REPO_DIR/mcp-servers.org.json"
 if [ -f "$ORG_MCP_MANIFEST" ]; then
   ORG_MCP_NATIVE="$(org_mcp_to_native gemini "$(read_org_mcp_manifest "$ORG_MCP_MANIFEST")")"
-  apply_org_mcp_servers "$ORG_MCP_NATIVE" "$SETTINGS_TARGET" "$PREEXISTING_MCP" "$MCP_BACKUP"
+fi
+
+# Backup first, then the merge, the reserved MCP entries (mempalace patched
+# with the detected Python, sequentialthinking TLS-wrapped per spec 0084) and
+# both MCP folds. The function prints its own ERROR line naming the backup.
+settings_rc=0
+gemini_settings_write "$SETTINGS_TARGET" "$SETTINGS_SRC" "$REPO_DIR" "$MEMPALACE_PYTHON_BIN" "$ORG_MCP_NATIVE" || settings_rc=$?
+case "$settings_rc" in
+  0) ;;
+  2)
+    echo "  settings.json was merged but its MCP servers are incomplete — setup aborted. Re-run this script." >&2
+    exit 1
+    ;;
+  *)
+    echo "  settings.json was not changed — setup aborted." >&2
+    exit 1
+    ;;
+esac
+if [ "$MEMPALACE_INSTALLED" -eq 1 ]; then
+  echo "  Merged: settings.json (existing content kept; mempalace registered with the detected Python + wrapper path)"
+else
+  echo "  Merged: settings.json (existing content kept; mempalace omitted from mcpServers)"
 fi
 
 # MemPalace HTTP by default (spec 0113 delta-02 R17-R20). Runs AFTER the
-# stdio-shaped template write above and after both folds — reserved names
+# stdio-shaped merge above and after both folds — reserved names
 # never appear in a preserved side (MCP_RESERVED_NAMES), so no fold touches
 # this entry. Exit handling: 0 = HTTP registered; 1 = no usable serving
 # daemon, the just-written stdio entry stays (the previous arrangement, R19
@@ -250,8 +240,8 @@ fi
 # not completed, the stdio entry stays WITH a loud lockout warning (R20
 # forbids converging against a probe-verified serving daemon).
 if [ "${MEMPALACE_INSTALLED:-0}" -eq 1 ]; then
-  ensure_mempalace_http "$REPO_DIR" gemini
-  _mempalace_rc=$?
+  _mempalace_rc=0
+  ensure_mempalace_http "$REPO_DIR" gemini || _mempalace_rc=$?
   case "$_mempalace_rc" in
     0)
       echo "  MemPalace reaches shared memory through the HTTP daemon."
@@ -401,7 +391,9 @@ done
 
 # --- Transcript hooks (opt-in) ---
 echo ""
-ENABLE_TRANSCRIPTS=$(echo -e "no\nyes" | fzf --height 10% --header "Enable automatic session recording to MemPalace? (opt-in)")
+# `|| true`: under `set -e`, Esc makes fzf exit 130 and would abort setup before
+# the usage-capture question below; a canceled answer reads as a decline.
+ENABLE_TRANSCRIPTS=$(echo -e "no\nyes" | fzf --height 10% --header "Enable automatic session recording to MemPalace? (opt-in)" || true)
 if [ "$ENABLE_TRANSCRIPTS" = "yes" ]; then
   HOOKS_SRC="$REPO_DIR/hooks/gemini-transcript-hooks.json"
   HOOK_SCRIPT_SRC="$REPO_DIR/hooks/mempalace-transcript.sh"
@@ -416,13 +408,12 @@ if [ "$ENABLE_TRANSCRIPTS" = "yes" ]; then
   echo "  5. Hardcode MEMPALACE_TRANSCRIPT_ENABLED=1 (and MEMPALACE_PYTHON if detected)"
   echo "     into each hook's command line — no shell-profile changes needed."
   echo ""
-  CONFIRM_TRANSCRIPTS=$(echo -e "yes\nno" | fzf --height 10% --header "Apply these changes to settings.json?")
+  CONFIRM_TRANSCRIPTS=$(echo -e "yes\nno" | fzf --height 10% --header "Apply these changes to settings.json?" || true)
   if [ "$CONFIRM_TRANSCRIPTS" = "yes" ]; then
     mkdir -p "$GEMINI_HOOKS_DIR"
     install_file "$HOOK_SCRIPT_SRC" "$HOOK_SCRIPT_TARGET" \
       "mempalace-transcript.sh -> ~/.gemini/hooks/mempalace-transcript.sh"
     chmod +x "$HOOK_SCRIPT_TARGET" 2>/dev/null || true
-    backup_file "$SETTINGS_TARGET"
     ENV_PREFIX='MEMPALACE_TRANSCRIPT_ENABLED=1'
     if [ -n "${MEMPALACE_PYTHON_BIN:-}" ]; then
       ENV_PREFIX="MEMPALACE_TRANSCRIPT_ENABLED=1 MEMPALACE_PYTHON=$MEMPALACE_PYTHON_BIN"
@@ -432,31 +423,64 @@ if [ "$ENABLE_TRANSCRIPTS" = "yes" ]; then
     # Rewrite every nested command: substitute the source-file tokens with the
     # installed absolute path for transcripts (prefixed by env vars) or the
     # in-repo absolute path for the worktree git guard (without env prefix).
-    # Hooks become independent of any project-dir variable resolution.
+    # Hooks become independent of any project-dir variable resolution. Usage
+    # capture is not part of this manifest: it has its own opt-in below
+    # (spec 0211).
+    HOOKS_PATCHED_TMP="$(mktemp)"
     jq --arg envp "$ENV_PREFIX" --arg hook_path "$HOOK_SCRIPT_TARGET" --arg guard_path "$GUARD_ABS" '
       (.. | objects | select(.type? == "command")) |=
         (if (.name? == "transcript-git-guard" or (.command | contains("worktree-git-guard.sh")))
          then .command = ("bash " + $guard_path)
          else .command = ($envp + " " + (.command | gsub("\\$\\{GEMINI_PROJECT_DIR\\}/hooks/mempalace-transcript.sh"; $hook_path)))
          end)' \
-      "$HOOKS_SRC" > "${SETTINGS_TARGET}.hooks.tmp"
-    if grep -q '\${GEMINI_PROJECT_DIR}' "${SETTINGS_TARGET}.hooks.tmp"; then
+      "$HOOKS_SRC" > "$HOOKS_PATCHED_TMP"
+    if grep -q '\${GEMINI_PROJECT_DIR}' "$HOOKS_PATCHED_TMP"; then
       echo "  ERROR: Unresolved \${GEMINI_PROJECT_DIR} token in patched hooks." >&2
-      rm -f "${SETTINGS_TARGET}.hooks.tmp"
+      rm -f "$HOOKS_PATCHED_TMP"
       exit 1
     fi
-    jq -s '.[0] * .[1]' \
-      "$SETTINGS_TARGET" "${SETTINGS_TARGET}.hooks.tmp" > "${SETTINGS_TARGET}.tmp"
-    mv "${SETTINGS_TARGET}.tmp" "$SETTINGS_TARGET"
-    rm -f "${SETTINGS_TARGET}.hooks.tmp"
-    echo "  Transcript hooks merged into settings.json"
-    echo "  Hook script installed at $HOOK_SCRIPT_TARGET (no longer depends on the repo path)"
-    echo "  Worktree git guard wired to $GUARD_ABS (in-repo absolute path)"
+    # Backup-first and 0600 — this file holds the MemPalace bearer token once
+    # ensure_mempalace_http ran, and the former `jq > tmp; mv` widened it to
+    # umask mode. It also carries any registered capture command through the
+    # merge unchanged (spec 0211 R8).
+    if ! merge_session_recording_hooks gemini "$SETTINGS_TARGET" "$HOOKS_PATCHED_TMP"; then
+      echo "  Transcript activation FAILED — setup continues without it." >&2
+    else
+      echo "  Transcript hooks merged into settings.json"
+      echo "  Hook script installed at $HOOK_SCRIPT_TARGET (no longer depends on the repo path)"
+      echo "  Worktree git guard wired to $GUARD_ABS (in-repo absolute path)"
+      warn_if_linked_worktree "$REPO_DIR" "worktree git guard"
+    fi
+    rm -f "$HOOKS_PATCHED_TMP"
   else
     echo "  Transcript activation canceled by user."
+    echo "  Any session-recording hooks and worktree git guard an earlier run registered in settings.json are left in place."
   fi
 else
   echo "  Session recording disabled (can enable later by re-running this script)."
+  echo "  Any session-recording hooks and worktree git guard an earlier run registered in settings.json are left in place."
+fi
+
+# --- Usage capture (opt-in, spec 0211) ---
+# Its own question, asked whatever the session-recording answer was (R1) and
+# never gated on MemPalace (R3): capture writes to the file-system journal.
+# Every read and write of a capture entry lives in scripts/lib/usage-capture-optin.sh.
+echo ""
+uc_rc=0
+UC_STATE="$(usage_capture_state gemini "$SETTINGS_TARGET")" || uc_rc=$?
+if [ "$uc_rc" -ne 0 ]; then
+  echo "  WARNING: cannot read $SETTINGS_TARGET as JSON; usage-capture step skipped." >&2
+else
+  if [ "$UC_STATE" = "absent" ]; then
+    usage_capture_disclose gemini "$SETTINGS_TARGET" "$REPO_DIR" || true
+    UC_ANSWER=$(printf 'no\nyes\n' | fzf --height 10% --header "Capture token usage for Gemini CLI? (opt-in, MemPalace not required)" || true)
+  else
+    UC_PATHS="$(usage_capture_paths gemini "$SETTINGS_TARGET")" || UC_PATHS=""
+    echo "Usage capture is registered in $SETTINGS_TARGET, at:"
+    printf '%s\n' "$UC_PATHS" | sed 's/^/  /'
+    UC_ANSWER=$(printf 'keep\nremove\n' | fzf --height 10% --header "Usage capture is registered for Gemini CLI. Keep it or remove it?" || true)
+  fi
+  usage_capture_apply gemini "$SETTINGS_TARGET" "$REPO_DIR" "$UC_STATE" "$UC_ANSWER" || echo "  Usage-capture step FAILED — setup continues." >&2
 fi
 
 # Clean up superseded ~/.gemini/GEMINI.md context file (spec 0061 delta-02, issue #1082)
