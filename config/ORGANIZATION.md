@@ -106,9 +106,10 @@ When a context rule conflicts with the team file, the context rule wins.
 - Access control follows the principle of least privilege.
 - Commit messages follow the convention defined in `AGENTS.md` (Gitmoji by
   default).
-- Documentation and commits are written in English unless the repository's
-  own convention says otherwise (e.g. a French training or a French client
-  report).
+- Documentation, code comments, commits, issues, and pull requests are
+  written in French by default. The project's convention wins when it says
+  otherwise: an explicit rule (`AGENTS.md`, `CONTRIBUTING.md`) or the
+  language its existing documentation and commit history already use.
 - Branch names are descriptive: `feat/`, `fix/`, `docs/`, `chore/`.
 - Significant work items are tracked in the project's issue tracker.
 
