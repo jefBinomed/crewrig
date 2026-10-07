@@ -36,15 +36,30 @@ if [ -z "$CWD" ]; then
   CWD="$(pwd -P)"
 fi
 
+# Antigravity PreToolUse handlers MUST steer explicitly: an empty stdout — and
+# even a bare `{}` — is converted by the engine into a fail-closed DENY of the
+# tool call with an empty reason (verified live 2026-09-02: it blocked every
+# run_command). The non-steering answer is {"decision": "ask"}, which defers
+# to the standard permission flow. Antigravity payloads are recognized by
+# their `.toolCall` envelope; other CLIs (Claude Code, Gemini CLI, Copilot)
+# keep the historical silent exit 0, which is their neutral form. Route every
+# allow path through this helper instead of a bare `exit 0`.
+allow() {
+  case "$INPUT" in
+    *'"toolCall"'*) echo '{"decision": "ask"}' ;;
+  esac
+  exit 0
+}
+
 # Only enforce when inside a ticket worktree under .worktrees/
 if ! echo "$CWD" | grep -q '/\.worktrees/'; then
-  exit 0
+  allow
 fi
 
 # Extract ticket id from worktree path
 TICKET_ID=$(echo "$CWD" | sed -n 's|.*/\.worktrees/\([^/]*\).*|\1|p')
 if [ -z "$TICKET_ID" ]; then
-  exit 0
+  allow
 fi
 
 # Check if command contains prohibited whole-tree operations
@@ -73,4 +88,4 @@ if [ "$IS_PROHIBITED" -eq 1 ]; then
   fi
 fi
 
-exit 0
+allow
