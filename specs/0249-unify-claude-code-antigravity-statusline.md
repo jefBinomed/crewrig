@@ -1,7 +1,7 @@
 ---
 id: "0249"
 slug: unify-claude-code-antigravity-statusline
-status: draft
+status: approved
 complexity: standard
 interaction-mode: AUTO
 related-issue: 4
