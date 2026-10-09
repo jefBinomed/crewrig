@@ -8,6 +8,10 @@ on:
       - "scripts/lib/release-notes/**"
       - "scripts/lib/monorepo-release-lib.sh"
       - "scripts/tests/test-monorepo-release-notes.sh"
+      - "scripts/lib/release-rehearse.mjs"
+      - "scripts/lib/release-pr.ts"
+      - "scripts/release-pr.ts"
+      - "scripts/tests/fixtures/release/forge-stub.mjs"
       - "package.json"
       - "package-lock.json"
   push:
@@ -17,12 +21,20 @@ on:
       - "scripts/lib/release-notes/**"
       - "scripts/lib/monorepo-release-lib.sh"
       - "scripts/tests/test-monorepo-release-notes.sh"
+      - "scripts/lib/release-rehearse.mjs"
+      - "scripts/lib/release-pr.ts"
+      - "scripts/release-pr.ts"
+      - "scripts/tests/fixtures/release/forge-stub.mjs"
       - "package.json"
       - "package-lock.json"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  actions: write
 
 jobs:
   release-notes:
@@ -39,7 +51,7 @@ jobs:
         run: npm ci
 
       - name: Render extension release notes through the monorepo release config
-        run: bash scripts/tests/test-monorepo-release-notes.sh
+        run: bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-monorepo-release-notes.sh
       - name: Cancel workflow on job failure
         if: failure()
         uses: ./.github/actions/cancel-on-failure

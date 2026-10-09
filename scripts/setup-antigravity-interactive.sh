@@ -165,6 +165,10 @@ mkdir -p "$(dirname "$AGY_MCP_CONFIG")"
 offer_tls_delegation
 echo ""
 
+# --- Production dependencies (spec 0240 R4-R6; after the spec 0084 TLS offer) ---
+install_production_dependencies "$REPO_DIR" || exit 1
+echo ""
+
 backup_file "$AGY_MCP_CONFIG"
 
 # Capture the operator's pre-existing MCP declarations + the backup path BEFORE
@@ -548,6 +552,9 @@ else
     echo "  Antigravity usage capture disabled (can enable later by re-running this script)."
   fi
 fi
+
+# --- MemPalace session-start check (spec 0246 R8, R11): registered only while ANTIGRAVITY_SESSION_CHECK says so ---
+{ command -v node >/dev/null 2>&1 && node "$REPO_DIR/scripts/lib/node-floor-guard.js" && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON "$REPO_DIR/scripts/session-check-hooks.ts" register antigravity; } || echo "  Session check registration FAILED — setup continues." >&2
 
 echo ""
 

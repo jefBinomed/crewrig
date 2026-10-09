@@ -30,7 +30,7 @@ tasks:
     preconditions:
       - sh: command -v pipx >/dev/null 2>&1
         msg: "pipx is required. Install with: brew install pipx (macOS) or apt-get install pipx (Linux)"
-    cmd: pipx install --force 'mempalace>=3.6.0,<3.7'
+    cmd: bash {{.REPO_DIR}}/scripts/lib/tls-exec.sh pipx install --force 'mempalace>=3.6.0,<3.7'
 
   mempalace:doctor:
     desc: "Report which MemPalace will actually answer on this machine — resolved path, interpreter and version behind every MemPalace command and every CLI's memory-server registration. Exits non-zero on divergence (spec 0108)."
@@ -79,6 +79,10 @@ tasks:
   usage:prune:
     desc: "Remove a period's usage-record journal entries and mirrored drawers together (spec 0207). Never automatic. Usage: task usage:prune -- <cli> <YYYY-MM> [--force | --unprune]"
     cmd: bash {{.REPO_DIR}}/scripts/usage-prune.sh {{.CLI_ARGS}}
+
+  usage:inventory:
+    desc: "Inventory (and, on request, purge) usage-record drawers directly in MemPalace's usage-records room, independent of the local usage root, journal, or mirror markers (spec 0239). Usage: task usage:inventory -- [list] [--wing <name>[,<name>...]] [--cli <cli>] [--period <YYYY-MM>] [--json] | delete [same filters] [--commit [--confirm-count <N>]]"
+    cmd: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON {{.REPO_DIR}}/scripts/usage-inventory.ts {{.CLI_ARGS}}
 
   usage:mirror:
     desc: "Run the MemPalace catch-up for pending usage-record mirror markers (spec 0207). Usage: task usage:mirror -- [--reconcile]"
@@ -425,6 +429,39 @@ tasks:
   ratchet:
     desc: "Run the shell / JavaScript / Python footprint ratchet, as CI does (spec 0238 R1-R3)"
     cmd: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-ratchet.ts
+
+  # Spec 0240 R13-R14: local entry points for the runtime-foundations suites
+  # (the exact CI command of the `runtime-foundations` capability) and a
+  # passthrough to the timing-budget harness, e.g.
+  #   task timing-budget -- --runs 10 --budget-ms 750 -- scripts/lib/node-floor-guard.js
+  test-runtime-foundations:
+    desc: "Run the floor guard, dependency-step and shared-module suites, as CI does (spec 0240)"
+    cmd: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tests/node-floor-guard.test.ts scripts/tests/paths.test.ts scripts/tests/line-endings.test.ts scripts/tests/tmp-file.test.ts scripts/tests/require-dependency.test.ts scripts/tests/check-timing-budget.test.ts scripts/tests/setup-dependency-step.test.ts scripts/tests/production-dependencies.test.ts
+
+  # Spec 0237: the exact CI command of the `windows-hook-probe` capability.
+  test-windows-hook-probe:
+    desc: "Run the Windows hook command-line parsing probe's suite, as CI does (spec 0237)"
+    cmd: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tests/probe-windows-hook-parsing.test.ts
+
+  # Spec 0244: the ticket-pickup ownership check. Run it before any branch,
+  # spec id or worktree for a ticket and stop on any non-zero exit, e.g.
+  #   task ticket-pickup -- --issue 1387
+  # Exit codes: 0 proceed, 1 usage, 2 cannot determine, 3 owned by another,
+  # 4 undecidable, 5 self-assignment not recorded (docs/ticket-ownership.md).
+  ticket-pickup:
+    desc: "Check who owns a ticket and claim it if free, before any authoring action (spec 0244)"
+    cmds:
+      - node scripts/lib/node-floor-guard.js
+      - node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/ticket-pickup.ts {{.CLI_ARGS}}
+
+  # Spec 0244: the exact CI command of the `ticket-pickup` capability.
+  test-ticket-pickup:
+    desc: "Run the ticket-pickup check's suites (model, fake-forge end to end, interleavings), as CI does (spec 0244)"
+    cmd: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tests/ticket-ownership.test.ts scripts/tests/ticket-pickup.test.ts
+
+  timing-budget:
+    desc: "Time a Node.js script against a budget (spec 0240 R13); pass the harness arguments after --"
+    cmd: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-timing-budget.ts {{.CLI_ARGS}}
 
   lint-ts:
     desc: "Run every TypeScript check CI runs: type-check, erasable syntax, Oxlint, Oxfmt (spec 0238 R4-R8)"

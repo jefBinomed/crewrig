@@ -40,16 +40,88 @@ capabilities:
   # focused capability keeps the same trigger (pull-request + push to
   # main/release/**) but ADDS a `paths:` filter covering the files its checks
   # exercise, and is marked `changeset-gated: true` so the `changeset-coverage`
-  # fail-safe (R5) can read the focused path sets from this reference rather
-  # than hardcoding them. The union of the focused `paths:` sets covers every
-  # file the checks exercise; `changeset-coverage` (no `paths:` filter) is the
-  # fail-safe that runs the full suite when a changed file falls outside the
-  # union. Cached groups declare `cache:` (the key-derivation need: which files
-  # + which env vars the cache key is derived from); the engine cache syntax is
-  # the mechanism and is never written here (R6/R7).
+  # exhaustive run (spec 0147 delta-01 R21) can read the gated commands from
+  # this reference rather than hardcoding them. Every tracked file is either
+  # owned by one of the focused `paths:` sets or carries a reasoned exemption
+  # (`ci/path-ownership-exemptions.txt`), which the `path-ownership` capability
+  # (no `paths:` filter) checks statically on every change; the exhaustive run
+  # is the daily and on-demand net underneath. Cached groups declare `cache:`
+  # (the key-derivation need: which files + which env vars the cache key is
+  # derived from); the engine cache syntax is the mechanism and is never written
+  # here (R6/R7).
 
   - id: component-drift
     name: "Check community component drift and run build-component tests"
+    trigger:
+      - on: pull-request
+        branches: [main, "release/**"]
+        paths:
+          - "scripts/build-components.sh"
+          - "scripts/test-build-components.sh"
+          - "scripts/tests/test-model-resolution.sh"
+          - "scripts/tests/test-agent-profile-migration.sh"
+          - "scripts/lib/**"
+          - "artifacts/**"
+          - "extensions/**"
+          - ".crewrig/core-paths.txt"
+          - "docs/layers.md"
+          - "docs/agent-profile-migration.md"
+          - "model-mappings/**"
+          - ".agents/skills/**"
+          - ".claude/skills/**"
+          - ".gemini/skills/**"
+          - ".github/skills/**"
+          - ".gemini/commands/**"
+          - "crewrig.config.toml"
+      - on: push
+        branches: [main, "release/**"]
+        paths:
+          - "scripts/build-components.sh"
+          - "scripts/test-build-components.sh"
+          - "scripts/tests/test-model-resolution.sh"
+          - "scripts/tests/test-agent-profile-migration.sh"
+          - "scripts/lib/**"
+          - "artifacts/**"
+          - "extensions/**"
+          - ".crewrig/core-paths.txt"
+          - "docs/layers.md"
+          - "docs/agent-profile-migration.md"
+          - "model-mappings/**"
+          - ".agents/skills/**"
+          - ".claude/skills/**"
+          - ".gemini/skills/**"
+          - ".github/skills/**"
+          - ".gemini/commands/**"
+          - "crewrig.config.toml"
+    portability: portable
+    changeset-gated: true
+    requires:
+      tools: [yq]
+    cache:
+      files:
+        - "scripts/build-components.sh"
+        - "scripts/test-build-components.sh"
+        - "scripts/tests/test-model-resolution.sh"
+        - "scripts/tests/test-agent-profile-migration.sh"
+        - "scripts/lib/**"
+        - "artifacts/**"
+        - "extensions/**"
+        - ".crewrig/core-paths.txt"
+        - "docs/agent-profile-migration.md"
+        - "model-mappings/**"
+        - ".agents/skills/**"
+        - ".claude/skills/**"
+        - ".gemini/skills/**"
+        - ".github/skills/**"
+        - ".gemini/commands/**"
+        - "crewrig.config.toml"
+      env: []
+    command:
+      - bash scripts/build-components.sh --target all --check
+      - bash scripts/test-build-components.sh
+
+  - id: model-resolution
+    name: "Run the model-resolution regression suite"
     trigger:
       - on: pull-request
         branches: [main, "release/**"]
@@ -95,12 +167,62 @@ capabilities:
         - ".crewrig/core-paths.txt"
         - "docs/agent-profile-migration.md"
         - "model-mappings/**"
+        - "scripts/ci-cache-guard.sh"
       env: []
     command:
-      - bash scripts/build-components.sh --target all --check
-      - bash scripts/test-build-components.sh
-      - bash scripts/tests/test-model-resolution.sh
-      - bash scripts/tests/test-agent-profile-migration.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-model-resolution.sh
+
+  - id: agent-profile-migration
+    name: "Run the agent-profile migration regression suite"
+    trigger:
+      - on: pull-request
+        branches: [main, "release/**"]
+        paths:
+          - "scripts/build-components.sh"
+          - "scripts/test-build-components.sh"
+          - "scripts/tests/test-model-resolution.sh"
+          - "scripts/tests/test-agent-profile-migration.sh"
+          - "scripts/lib/**"
+          - "artifacts/**"
+          - "extensions/**"
+          - ".crewrig/core-paths.txt"
+          - "docs/layers.md"
+          - "docs/agent-profile-migration.md"
+          - "model-mappings/**"
+      - on: push
+        branches: [main, "release/**"]
+        paths:
+          - "scripts/build-components.sh"
+          - "scripts/test-build-components.sh"
+          - "scripts/tests/test-model-resolution.sh"
+          - "scripts/tests/test-agent-profile-migration.sh"
+          - "scripts/lib/**"
+          - "artifacts/**"
+          - "extensions/**"
+          - ".crewrig/core-paths.txt"
+          - "docs/layers.md"
+          - "docs/agent-profile-migration.md"
+          - "model-mappings/**"
+    portability: portable
+    changeset-gated: true
+    requires:
+      tools: [yq]
+    cache:
+      files:
+        - "scripts/build-components.sh"
+        - "scripts/test-build-components.sh"
+        - "scripts/tests/test-model-resolution.sh"
+        - "scripts/tests/test-agent-profile-migration.sh"
+        - "scripts/lib/**"
+        - "artifacts/**"
+        - "extensions/**"
+        - ".crewrig/core-paths.txt"
+        - "docs/agent-profile-migration.md"
+        - "model-mappings/**"
+        - "scripts/ci-cache-guard.sh"
+      env: []
+    command:
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-agent-profile-migration.sh
 
   - id: extension-render
     name: "Enforce no committed generated extension output, a fresh render, and the declared file set"
@@ -189,18 +311,18 @@ capabilities:
       tools: [jq, yq]
     command:
       - bash scripts/check-extension-pivot.sh
-      - bash scripts/tests/test-check-extension-pivot.sh
-      - bash scripts/tests/test-build-extension.sh
-      - bash scripts/tests/test-extension-render-conformance.sh
-      - bash scripts/tests/test-extension-mcp-manifest.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-check-extension-pivot.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-build-extension.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-extension-render-conformance.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-extension-mcp-manifest.sh
       - bash scripts/build-extension.sh --check
       - bash scripts/check-extension-hook-tokens.sh
-      - bash scripts/tests/test-check-extension-hook-tokens.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-check-extension-hook-tokens.sh
       - bash scripts/check-extension-hook-map.sh
-      - bash scripts/tests/test-check-extension-hook-map.sh
-      - bash scripts/tests/test-migrate-extension.sh
-      - bash scripts/tests/test-release-package-extension.sh
-      - bash scripts/tests/test-create-extension-combinations.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-check-extension-hook-map.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-migrate-extension.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-release-package-extension.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-create-extension-combinations.sh
 
   - id: extension-provenance
     name: "Enforce extension provenance"
@@ -225,7 +347,7 @@ capabilities:
       tools: [yq]
     command:
       - bash scripts/check-extension-provenance.sh
-      - bash scripts/tests/test-check-extension-provenance.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-check-extension-provenance.sh
 
   - id: extension-manifest
     name: "Enforce extension manifest single-version and version-bump"
@@ -256,8 +378,8 @@ capabilities:
       tools: [yq]
     command:
       - bash scripts/check-extension-manifest-version.sh
-      - bash scripts/tests/test-check-extension-manifest-version.sh
-      - bash scripts/tests/test-check-extension-version-bump.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-check-extension-manifest-version.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-check-extension-version-bump.sh
 
   - id: extension-install
     name: "Test extension install and agent frontmatter contracts"
@@ -291,10 +413,10 @@ capabilities:
     requires:
       tools: [yq]
     command:
-      - bash scripts/tests/test-install-claude-plugin-marketplace.sh
-      - bash scripts/tests/test-build-claude-plugin-agents-glob.sh
-      - bash scripts/tests/test-gemini-agent-frontmatter.sh
-      - bash scripts/tests/test-install-extension-all.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-install-claude-plugin-marketplace.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-build-claude-plugin-agents-glob.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-gemini-agent-frontmatter.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-install-extension-all.sh
 
   - id: core-paths
     name: "Check core-paths resolve and sync-from-upstream"
@@ -325,8 +447,8 @@ capabilities:
       tools: [yq]
     command:
       - bash scripts/check-core-paths.sh
-      - bash scripts/tests/test-check-core-paths.sh
-      - bash scripts/tests/test-sync-from-upstream.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-check-core-paths.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-sync-from-upstream.sh
 
   - id: ci-parity
     name: "Test the CI generator and parity harness"
@@ -375,8 +497,8 @@ capabilities:
         - "docs/ci-reference-format.md"
       env: []
     command:
-      - bash scripts/tests/test-check-ci-parity.sh
-      - bash scripts/tests/test-build-ci.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-check-ci-parity.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-build-ci.sh
 
   - id: docs-index
     name: "Check docs index drift"
@@ -400,10 +522,11 @@ capabilities:
         - "scripts/build-docs-index.sh"
         - "scripts/tests/test-build-docs-index.sh"
         - "docs/**"
+        - "scripts/ci-cache-guard.sh"
       env: []
     command:
       - bash scripts/build-docs-index.sh --check
-      - bash scripts/tests/test-build-docs-index.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-build-docs-index.sh
 
   - id: figure-labels
     name: "Check figure labels with OCR"
@@ -430,7 +553,7 @@ capabilities:
       tools: [tesseract, python3]
     command:
       - bash scripts/check-figure-labels.sh
-      - bash scripts/tests/test-check-figure-labels.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-check-figure-labels.sh
 
   - id: mempalace
     name: "Test mempalace transcript, pin, and runtime guards"
@@ -439,6 +562,7 @@ capabilities:
         branches: [main, "release/**"]
         paths:
           - "scripts/tests/test-mempalace-*.sh"
+          - "scripts/tests/mempalace-http-client-reuse.test.ts"
           - "scripts/tests/test-system-context-store.sh"
           - "scripts/tests/test-setup-antigravity-transcript.sh"
           - "scripts/tests/test-setup-claude-transcript.sh"
@@ -449,10 +573,12 @@ capabilities:
           - "scripts/lib/**"
           - "artifacts/library/skills/mempalace/**"
           - "artifacts/library/skills/harness-report/**"
+          - "config/copilot/*.json.template"
       - on: push
         branches: [main, "release/**"]
         paths:
           - "scripts/tests/test-mempalace-*.sh"
+          - "scripts/tests/mempalace-http-client-reuse.test.ts"
           - "scripts/tests/test-system-context-store.sh"
           - "scripts/tests/test-setup-antigravity-transcript.sh"
           - "scripts/tests/test-setup-claude-transcript.sh"
@@ -463,14 +589,20 @@ capabilities:
           - "scripts/lib/**"
           - "artifacts/library/skills/mempalace/**"
           - "artifacts/library/skills/harness-report/**"
+          - "config/copilot/*.json.template"
     portability: portable
     changeset-gated: true
     requires:
-      runtime: python@3.12
+      # python@3.12 is the primary/image runtime (unchanged); node@24 is a
+      # SECONDARY runtime this job also needs for its TypeScript test
+      # (mempalace-http-client-reuse.test.ts) — installed alongside the
+      # image rather than replacing it (spec 0242, issue #1370).
+      runtime: [python@3.12, node@24]
       tools: [yq]
     cache:
       files:
         - "scripts/tests/test-mempalace-*.sh"
+        - "scripts/tests/mempalace-http-client-reuse.test.ts"
         - "scripts/tests/test-system-context-store.sh"
         - "scripts/tests/test-setup-antigravity-transcript.sh"
         - "scripts/tests/test-setup-claude-transcript.sh"
@@ -481,17 +613,20 @@ capabilities:
         - "scripts/lib/**"
         - "artifacts/library/skills/mempalace/**"
         - "artifacts/library/skills/harness-report/**"
+        - "config/copilot/*.json.template"
+        - "scripts/ci-cache-guard.sh"
       env: []
     command:
-      - bash scripts/tests/test-mempalace-transcript-hook.sh
-      - bash scripts/tests/test-setup-antigravity-transcript.sh
-      - bash scripts/tests/test-setup-claude-transcript.sh
-      - bash scripts/tests/test-worktree-git-guard.sh
-      - bash scripts/tests/test-setup-copilot-transcript.sh
-      - bash scripts/tests/test-setup-gemini-transcript.sh
-      - bash scripts/tests/test-antigravity-component-install.sh
-      - bash scripts/tests/test-antigravity-discovery-probe.sh
-      - bash scripts/tests/test-mempalace-version-range.sh
+      - node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tests/mempalace-http-client-reuse.test.ts
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-mempalace-transcript-hook.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-setup-antigravity-transcript.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-setup-claude-transcript.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-worktree-git-guard.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-setup-copilot-transcript.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-setup-gemini-transcript.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-antigravity-component-install.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-antigravity-discovery-probe.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-mempalace-version-range.sh
       # `packaging` is the spec-0108 launch guard's PRIMARY comparator and is the
       # branch in force on every serving interpreter that carries it, so CI must
       # exercise it against the real library rather than only against the degraded
@@ -500,13 +635,13 @@ capabilities:
       # comparator was actually tested. Not a runtime dependency of the guard: the
       # wrapper still runs, and is still tested, where `packaging` is absent.
       - python3 -m pip install --quiet packaging
-      - bash scripts/tests/test-mempalace-pin.sh
-      - bash scripts/tests/test-mempalace-runtime-guard.sh
-      - bash scripts/tests/test-mempalace-doctor.sh
-      - bash scripts/tests/test-system-context-store.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-mempalace-pin.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-mempalace-runtime-guard.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-mempalace-doctor.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-system-context-store.sh
 
   - id: test-wiring
-    name: "Enforce test-wiring registration and stray suites"
+    name: "Enforce test-wiring registration and suite syntax"
     trigger:
       - on: pull-request
         branches: [main, "release/**"]
@@ -515,8 +650,12 @@ capabilities:
           - "scripts/tests/test-check-test-wiring.sh"
           - "scripts/check-test-strays.sh"
           - "scripts/tests/test-check-test-strays.sh"
+          # Not sourced by this capability any more; its unit case lives in
+          # test-check-test-strays.sh (case r), so a change to it still reruns that suite.
+          - "scripts/lib/base-ref-resolve.sh"
           - "scripts/tests/**"
           - "hooks/worktree-git-guard.sh"
+          - "ci/test-wiring-exemptions.txt"
       - on: push
         branches: [main, "release/**"]
         paths:
@@ -524,24 +663,20 @@ capabilities:
           - "scripts/tests/test-check-test-wiring.sh"
           - "scripts/check-test-strays.sh"
           - "scripts/tests/test-check-test-strays.sh"
+          # Not sourced by this capability any more; its unit case lives in
+          # test-check-test-strays.sh (case r), so a change to it still reruns that suite.
+          - "scripts/lib/base-ref-resolve.sh"
           - "scripts/tests/**"
           - "hooks/worktree-git-guard.sh"
+          - "ci/test-wiring-exemptions.txt"
     portability: portable
     changeset-gated: true
-    cache:
-      files:
-        - "scripts/lib/**"
-        - "scripts/check-test-strays.sh"
-      env: []
-    cache-guard: false
-    requires:
-      history-depth: full
     command:
       - bash scripts/check-test-wiring.sh
-      - bash scripts/tests/test-check-test-wiring.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-check-test-wiring.sh
       - bash scripts/check-test-strays.sh
-      - bash scripts/tests/test-check-test-strays.sh
-      - bash scripts/tests/test-worktree-git-guard.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-check-test-strays.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-worktree-git-guard.sh
 
   - id: chroma-mcp
     name: "Test chroma server, MCP daemon, and worktree claim"
@@ -559,6 +694,8 @@ capabilities:
           - "scripts/repair-mempalace-http.sh"
           - "scripts/switch-mempalace-http.sh"
           - "scripts/lib/**"
+          - "config/launchd/**"
+          - "config/systemd/**"
       - on: push
         branches: [main, "release/**"]
         paths:
@@ -572,6 +709,8 @@ capabilities:
           - "scripts/repair-mempalace-http.sh"
           - "scripts/switch-mempalace-http.sh"
           - "scripts/lib/**"
+          - "config/launchd/**"
+          - "config/systemd/**"
     portability: portable
     changeset-gated: true
     requires:
@@ -589,16 +728,19 @@ capabilities:
         - "scripts/repair-mempalace-http.sh"
         - "scripts/switch-mempalace-http.sh"
         - "scripts/lib/**"
+        - "config/launchd/**"
+        - "config/systemd/**"
+        - "scripts/ci-cache-guard.sh"
       env: []
     command:
-      - bash scripts/tests/test-chroma-fd-limits.sh
-      - bash scripts/tests/test-chroma-health-race.sh
-      - bash scripts/tests/test-chroma-server.sh
-      - bash scripts/tests/test-mcp-daemon.sh
-      - bash scripts/tests/test-palace-path-propagation.sh
-      - bash scripts/tests/test-repair-mempalace-http.sh
-      - bash scripts/tests/test-rotate-mempalace-token.sh
-      - bash scripts/tests/test-worktree-claim.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-chroma-fd-limits.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-chroma-health-race.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-chroma-server.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-mcp-daemon.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-palace-path-propagation.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-repair-mempalace-http.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-rotate-mempalace-token.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-worktree-claim.sh
 
   # e2e is the heaviest group; it stays enforced on push/PR (changeset-gated)
   # but is ALSO manually triggerable (spec 0147 R8) so a contributor can run it
@@ -614,6 +756,8 @@ capabilities:
           - "tests/e2e/**"
           - "scripts/e2e/**"
           - "docs/cli-matrix.md"
+          - "docker/e2e/.versions.lock"
+          - ".gitignore"
       - on: push
         branches: [main, "release/**"]
         paths:
@@ -621,6 +765,8 @@ capabilities:
           - "tests/e2e/**"
           - "scripts/e2e/**"
           - "docs/cli-matrix.md"
+          - "docker/e2e/.versions.lock"
+          - ".gitignore"
       - on: manual
     portability: portable
     changeset-gated: true
@@ -628,30 +774,30 @@ capabilities:
       runtime: python@3.12
       tools: [yq]
     command:
-      - bash scripts/tests/test-e2e-assert-lib.sh
-      - bash scripts/tests/test-e2e-auth-claude-json.sh
-      - bash scripts/tests/test-e2e-auth-common.sh
-      - bash scripts/tests/test-e2e-auth-ollama.sh
-      - bash scripts/tests/test-e2e-auth-ready.sh
-      - bash scripts/tests/test-e2e-auth-taskfile.sh
-      - bash scripts/tests/test-e2e-defaults-toml.sh
-      - bash scripts/tests/test-e2e-docker-images.sh
-      - bash scripts/tests/test-e2e-gitignore.sh
-      - bash scripts/tests/test-e2e-judge-config.sh
-      - bash scripts/tests/test-e2e-libs-readme.sh
-      - bash scripts/tests/test-e2e-llm-judge-lib.sh
-      - bash scripts/tests/test-e2e-probes.sh
-      - bash scripts/tests/test-e2e-readme.sh
-      - bash scripts/tests/test-e2e-report.sh
-      - bash scripts/tests/test-e2e-runner-delegation.sh
-      - bash scripts/tests/test-e2e-runner-taskfile.sh
-      - bash scripts/tests/test-e2e-runner.sh
-      - bash scripts/tests/test-e2e-scenarios-parity.sh
-      - bash scripts/tests/test-e2e-scenarios-structure.sh
-      - bash scripts/tests/test-e2e-structural-lib.sh
-      - bash scripts/tests/test-e2e-taskfile.sh
-      - bash scripts/tests/test-e2e-toml-merge.sh
-      - bash scripts/tests/test-e2e-versions-lock.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-e2e-assert-lib.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-e2e-auth-claude-json.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-e2e-auth-common.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-e2e-auth-ollama.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-e2e-auth-ready.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-e2e-auth-taskfile.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-e2e-defaults-toml.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-e2e-docker-images.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-e2e-gitignore.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-e2e-judge-config.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-e2e-libs-readme.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-e2e-llm-judge-lib.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-e2e-probes.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-e2e-readme.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-e2e-report.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-e2e-runner-delegation.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-e2e-runner-taskfile.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-e2e-runner.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-e2e-scenarios-parity.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-e2e-scenarios-structure.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-e2e-structural-lib.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-e2e-taskfile.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-e2e-toml-merge.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-e2e-versions-lock.sh
 
   - id: setup
     name: "Test setup helpers and validation backend"
@@ -663,6 +809,7 @@ capabilities:
           - "scripts/tests/test-tls-delegation.sh"
           - "scripts/setup-*.sh"
           - "scripts/lib/**"
+          - "mcp-servers.org.json"
       - on: push
         branches: [main, "release/**"]
         paths:
@@ -670,22 +817,23 @@ capabilities:
           - "scripts/tests/test-tls-delegation.sh"
           - "scripts/setup-*.sh"
           - "scripts/lib/**"
+          - "mcp-servers.org.json"
     portability: portable
     changeset-gated: true
     requires:
       tools: [jq, yq]
     command:
-      - bash scripts/tests/test-setup-validation-backend.sh
-      - bash scripts/tests/test-tls-delegation.sh
-      - bash scripts/tests/test-setup-mcp-merge.sh
-      - bash scripts/tests/test-setup-mempalace-rc-guard.sh
-      - bash scripts/tests/test-setup-org-mcp.sh
-      - bash scripts/tests/test-setup-mcp-fold-secrets-argv.sh
-      - bash scripts/tests/test-setup-catalogue-picker.sh
-      - bash scripts/tests/test-setup-ensure-tier-built.sh
-      - bash scripts/tests/test-setup-gemini-md-cleanup.sh
-      - bash scripts/tests/test-setup-init-command-instructions.sh
-      - bash scripts/tests/test-setup-gemini-settings-merge.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-setup-validation-backend.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-tls-delegation.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-setup-mcp-merge.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-setup-mempalace-rc-guard.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-setup-org-mcp.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-setup-mcp-fold-secrets-argv.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-setup-catalogue-picker.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-setup-ensure-tier-built.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-setup-gemini-md-cleanup.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-setup-init-command-instructions.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-setup-gemini-settings-merge.sh
 
   - id: misc
     name: "Run miscellaneous portability and reservation checks"
@@ -728,13 +876,13 @@ capabilities:
       runtime: python@3.12
     command:
       - bash scripts/check-no-machine-paths.sh
-      - bash scripts/tests/test-check-no-machine-paths.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-check-no-machine-paths.sh
       - bash scripts/check-gemini-overlay-enrollment.sh
-      - bash scripts/tests/test-check-gemini-overlay-enrollment.sh
-      - bash scripts/tests/test-check-bash32-portability.sh
-      - bash scripts/tests/test-check-pipefail-grep.sh
-      - bash scripts/tests/test-reserve-spec-id.sh
-      - bash scripts/tests/test-check-spec-id-reserved.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-check-gemini-overlay-enrollment.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-check-bash32-portability.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-check-pipefail-grep.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-reserve-spec-id.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-check-spec-id-reserved.sh
 
   - id: frontmatter
     name: "Test frontmatter, skill-version, and assembly contracts"
@@ -770,13 +918,13 @@ capabilities:
     requires:
       tools: [yq]
     command:
-      - bash scripts/tests/test-extract-frontmatter.sh
-      - bash scripts/tests/test-check-skill-versions.sh
-      - bash scripts/tests/test-check-feedback-routing.sh
-      - bash scripts/tests/test-assembly-verification.sh
-      - bash scripts/tests/test-artifact-build-install-scope.sh
-      - bash scripts/tests/test-component-tier-resolution.sh
-      - bash scripts/tests/test-pr-logbook-label-scope.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-extract-frontmatter.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-check-skill-versions.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-check-feedback-routing.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-assembly-verification.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-artifact-build-install-scope.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-component-tier-resolution.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-pr-logbook-label-scope.sh
 
   - id: check-model-mappings
     name: "Check model-mapping conformance and run its mutation test suite"
@@ -801,7 +949,7 @@ capabilities:
       tools: [yq]
     command:
       - bash scripts/check-model-mappings.sh
-      - bash scripts/tests/test-check-model-mappings.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-check-model-mappings.sh
 
   - id: check-agent-profiles
     name: "Check agent capability-profile conformance and run its mutation test suite"
@@ -824,7 +972,7 @@ capabilities:
       tools: [yq]
     command:
       - bash scripts/check-agent-profiles.sh
-      - bash scripts/tests/test-check-agent-profiles.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-check-agent-profiles.sh
 
   - id: check-metadata-keys
     name: "Check the component metadata: closed key set and run its mutation test suite"
@@ -847,7 +995,7 @@ capabilities:
       tools: [yq]
     command:
       - bash scripts/check-component-metadata-keys.sh
-      - bash scripts/tests/test-check-component-metadata-keys.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-check-component-metadata-keys.sh
 
   - id: check-claude-agent-layout
     name: "Check the compiled Claude Code agent tree is flat and run its mutation test suite"
@@ -870,7 +1018,7 @@ capabilities:
     changeset-gated: true
     command:
       - bash scripts/check-claude-agent-layout.sh
-      - bash scripts/tests/test-check-claude-agent-layout.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-check-claude-agent-layout.sh
 
   - id: markdown-links
     name: "Check relative Markdown link integrity"
@@ -899,16 +1047,37 @@ capabilities:
       runtime: python@3.12
     command:
       - bash scripts/check-markdown-links.sh
-      - bash scripts/tests/test-check-markdown-links.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-check-markdown-links.sh
 
-  # changeset-coverage is the fail-safe (spec 0147 R5): it carries NO `paths:`
-  # filter, so it runs on every change on both engines. Its command reads the
-  # focused `paths:` sets from this reference (via yq, never hardcoded),
-  # computes the changed files, and — when a changed file is not covered by the
-  # union of the focused path sets — runs the full check suite; when every
-  # changed file is covered it is a fast no-op.
+  # changeset-coverage is the exhaustive run (spec 0147 delta-01 R21): it has
+  # no pull-request and no push trigger. It runs `scheduled` (daily, on the
+  # default branch) and `manual`, and executes EVERY command of every
+  # `changeset-gated: true` capability unconditionally, reading them from this
+  # reference (via yq, never hardcoded). There is no diff and no base ref. The
+  # pull-request guarantee that used to be this job's run-time fail-safe is now
+  # the static `path-ownership` capability below. The job provisions
+  # python@3.12, yq and node@24 (the secondary runtime also runs the
+  # `mempalace` TypeScript test in the full suite), so a `node@22` capability
+  # must still never be changeset-gated. `history-depth: full` is kept so the
+  # gated commands see the same checkout on both engines.
   - id: changeset-coverage
-    name: "Fail-safe: run the full check suite when a change is uncovered"
+    name: "Exhaustive run of every changeset-gated check"
+    trigger:
+      - on: scheduled
+      - on: manual
+    portability: portable
+    requires:
+      runtime: [python@3.12, node@24]
+      tools: [yq]
+      history-depth: full
+    command:
+      - bash scripts/ci-changeset-coverage.sh
+
+  # changeset-coverage-test keeps the exhaustive script's regression test on the
+  # pull-request path (spec 0147 delta-01 R23). It has never been path-filtered
+  # and is not changeset-gated.
+  - id: changeset-coverage-test
+    name: "Test the exhaustive-run script"
     trigger:
       - on: pull-request
         branches: [main, "release/**"]
@@ -916,11 +1085,33 @@ capabilities:
         branches: [main, "release/**"]
     portability: portable
     requires:
-      runtime: python@3.12
+      runtime: node@24
       tools: [yq]
-      history-depth: full
     command:
-      - bash scripts/ci-changeset-coverage.sh
+      - node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tests/ci-changeset-coverage.test.ts
+
+  # path-ownership is the static ownership check (spec 0147 delta-01 R11-R18):
+  # every tracked file is owned by the `paths:` of a pull-request capability or
+  # exempted with a reason in ci/path-ownership-exemptions.txt (plus the
+  # optional adopter overlay ci/org/path-ownership-exemptions.txt). It reads only
+  # the working tree and this reference, never a base ref, so it has no
+  # `paths:` filter and cannot be skipped. `npm ci` provides `js-yaml`.
+  - id: path-ownership
+    name: "Check path ownership and stray-scan wiring"
+    trigger:
+      - on: pull-request
+        branches: [main, "release/**"]
+      - on: push
+        branches: [main, "release/**"]
+    portability: portable
+    requires:
+      runtime: node@24
+    command:
+      - npm ci
+      - node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tests/check-path-ownership.test.ts
+      - node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-path-ownership.ts
+      - node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tests/ci-cache-guard-scan.test.ts scripts/tests/check-stray-scan-wiring.test.ts
+      - node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-stray-scan-wiring.ts
 
   - id: lint-markdown
     name: "Lint Markdown files"
@@ -977,6 +1168,164 @@ capabilities:
       - node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tests/check-erasable-syntax.test.ts scripts/tests/lint-typescript.test.ts scripts/tests/check-typescript.test.ts
       - node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-typescript.ts
 
+  # Spec 0240 R4-R11, R13, R16: the Node.js floor guard, the production-
+  # dependency step and the shared scripts/lib/ TypeScript modules, verified by
+  # their node --test suites. No `paths:` filter, like `ratchet`: the suites
+  # are fast, and a lockfile or setup-script change must re-run them.
+  # production-dependencies.test.ts needs the npm registry and skips itself,
+  # with a message, when `npm ping` fails.
+  - id: runtime-foundations
+    name: "Node.js floor guard, production-dependency step and shared TS modules"
+    trigger:
+      - on: pull-request
+        branches: [main, "release/**"]
+      - on: push
+        branches: [main, "release/**"]
+    portability: portable
+    requires:
+      runtime: node@24
+    command:
+      - npm ci
+      - node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tests/node-floor-guard.test.ts scripts/tests/paths.test.ts scripts/tests/line-endings.test.ts scripts/tests/tmp-file.test.ts scripts/tests/require-dependency.test.ts scripts/tests/check-timing-budget.test.ts scripts/tests/setup-dependency-step.test.ts scripts/tests/production-dependencies.test.ts
+
+  # Spec 0237 (issue #1322): the Windows hook command-line parsing probe's
+  # install / restore contract, root resolution and wmic parser. The probe
+  # itself only runs on a real Windows host (docs/runbooks/
+  # windows-hook-parsing-probe.md); this job pins its host-independent logic.
+  # The test reads the four committed transcript manifests to check the
+  # installed JSON shape, hence their place in the paths filter. Deliberately
+  # NOT changeset-gated, for the same reason usage-storage is not: a node@22
+  # capability must never enter the fail-safe job's execution set (it
+  # provisions python@3.12, yq and node@24).
+  - id: windows-hook-probe
+    name: "Windows hook command-line parsing probe (spec 0237)"
+    trigger:
+      - on: pull-request
+        branches: [main, "release/**"]
+        paths:
+          - "scripts/probe-windows-hook-parsing.ts"
+          - "scripts/tests/probe-windows-hook-parsing.test.ts"
+          - "hooks/*-transcript-hooks.json"
+      - on: push
+        branches: [main, "release/**"]
+        paths:
+          - "scripts/probe-windows-hook-parsing.ts"
+          - "scripts/tests/probe-windows-hook-parsing.test.ts"
+          - "hooks/*-transcript-hooks.json"
+    portability: portable
+    requires:
+      runtime: node@24
+    command:
+      - node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tests/probe-windows-hook-parsing.test.ts
+
+  # Spec 0244 (issue #1387): the cross-contributor ticket-pickup check — the
+  # pure ownership model and the end-to-end tool against the in-process fake
+  # forge (GitHub, GitLab, Gitea wire shapes).
+  - id: ticket-pickup
+    name: "Ticket-pickup ownership check (spec 0244)"
+    trigger:
+      - on: pull-request
+        branches: [main, "release/**"]
+        paths:
+          - "scripts/ticket-pickup.ts"
+          - "scripts/lib/ticket-*.ts"
+          - "scripts/lib/forge-*.ts"
+          - "scripts/lib/ts-scope.ts"
+          - "scripts/tests/ticket-*.test.ts"
+          - "scripts/tests/fixtures/ticket-pickup/**"
+      - on: push
+        branches: [main, "release/**"]
+        paths:
+          - "scripts/ticket-pickup.ts"
+          - "scripts/lib/ticket-*.ts"
+          - "scripts/lib/forge-*.ts"
+          - "scripts/lib/ts-scope.ts"
+          - "scripts/tests/ticket-*.test.ts"
+          - "scripts/tests/fixtures/ticket-pickup/**"
+    portability: portable
+    requires:
+      runtime: node@24
+    command:
+      - node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tests/ticket-ownership.test.ts scripts/tests/ticket-pickup.test.ts
+
+  # Spec 0246 (issue #1410): the MemPalace session-start check, its hook writer,
+  # and the status side's wrong-endpoint line. The tests run hermetically: a
+  # scratch HOME and CLAUDE_CONFIG_DIR, stub assistant CLIs first on PATH, and
+  # a fake endpoint on 127.0.0.1:0. jq is the shell reader's own parser; the
+  # agreement test logs `jq --version`.
+  - id: mempalace-session-check
+    name: "MemPalace session-start check (spec 0246)"
+    trigger:
+      - on: pull-request
+        branches: [main, "release/**"]
+        paths:
+          - "scripts/mempalace-session-check.ts"
+          - "scripts/session-check-hooks.ts"
+          - "scripts/lib/mempalace-registration.ts"
+          - "scripts/lib/session-check-throttle.ts"
+          - "scripts/lib/session-check-config.ts"
+          - "scripts/lib/tmp-file.ts"
+          - "scripts/lib/mcp-daemon-launcher.sh"
+          - "scripts/lib/common.sh"
+          - "scripts/lib/usage-capture-optin.sh"
+          - "scripts/status-mcp-server.sh"
+          - "scripts/setup-*-interactive.sh"
+          - "scripts/tests/mempalace-registration*.test.ts"
+          - "scripts/tests/mempalace-session-check.test.ts"
+          - "scripts/tests/session-check-*.test.ts"
+          - "scripts/tests/lib/session-check-harness.ts"
+          - "scripts/tests/fixtures/session-check/**"
+          - "hooks/*-transcript-hooks.json"
+          - "hooks/*-usage-capture-hooks.json"
+      - on: push
+        branches: [main, "release/**"]
+        paths:
+          - "scripts/mempalace-session-check.ts"
+          - "scripts/session-check-hooks.ts"
+          - "scripts/lib/mempalace-registration.ts"
+          - "scripts/lib/session-check-throttle.ts"
+          - "scripts/lib/session-check-config.ts"
+          - "scripts/lib/tmp-file.ts"
+          - "scripts/lib/mcp-daemon-launcher.sh"
+          - "scripts/lib/common.sh"
+          - "scripts/lib/usage-capture-optin.sh"
+          - "scripts/status-mcp-server.sh"
+          - "scripts/setup-*-interactive.sh"
+          - "scripts/tests/mempalace-registration*.test.ts"
+          - "scripts/tests/mempalace-session-check.test.ts"
+          - "scripts/tests/session-check-*.test.ts"
+          - "scripts/tests/lib/session-check-harness.ts"
+          - "scripts/tests/fixtures/session-check/**"
+          - "hooks/*-transcript-hooks.json"
+          - "hooks/*-usage-capture-hooks.json"
+    portability: portable
+    requires:
+      runtime: node@24
+      tools: [jq]
+    command:
+      - node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tests/mempalace-registration-agreement.test.ts scripts/tests/mempalace-registration.test.ts scripts/tests/mempalace-session-check.test.ts scripts/tests/session-check-throttle.test.ts scripts/tests/session-check-hooks.test.ts
+
+  # Spec 0240 R3: the floor guard's failure path, proven on a Node.js release
+  # that cannot strip types. Each command is plain POSIX so the job needs no
+  # TypeScript; the grep tokens are the guard's stable diagnostic contract
+  # (scripts/lib/node-floor-guard.js header).
+  - id: node-floor-guard
+    name: "Node.js floor guard rejects a pre-24 release"
+    trigger:
+      - on: pull-request
+        branches: [main, "release/**"]
+      - on: push
+        branches: [main, "release/**"]
+    portability: portable
+    requires:
+      runtime: node@20
+    command:
+      - 'if node scripts/lib/node-floor-guard.js >guard.out 2>&1; then echo "guard accepted Node $(node -v)"; exit 1; fi'
+      - 'grep -F "$(node -v) detected" guard.out'
+      - 'grep -F "requires Node.js >= 24" guard.out'
+      - 'grep -F "https://nodejs.org/en/download" guard.out'
+      - 'if grep -E "SyntaxError|ERR_|Cannot find module" guard.out; then exit 1; fi'
+
   # The spec linter's base-branch `status: draft` check (spec 0109 R2) resolves
   # the change's base ref, so the job needs full source history — declared as
   # `history-depth: full`, same as the two version-bump guards below.
@@ -996,7 +1345,7 @@ capabilities:
       BASE_REF: "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
     command:
       - npm install
-      - bash scripts/tests/test-spec-linter.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-spec-linter.sh
       - task spec:lint
 
   - id: test-harness-curate
@@ -1124,6 +1473,7 @@ capabilities:
           - "scripts/**"
           - "hooks/**"
           - ".github/workflows/scripting-conventions.yml"
+          - "ci/bash32-forbidden.txt"
     portability: portable
     command:
       - |
@@ -1173,7 +1523,7 @@ capabilities:
 
   # usage-record-schema validates the usage record contract (spec 0205).
   # Deliberately NOT changeset-gated: the fail-safe job (ci-changeset-coverage.sh)
-  # provisions python@3.12 + yq and no Node, so a node@22 capability must never
+  # provisions python@3.12 + yq + node@24, so a node@22 capability must never
   # enter its execution set.
   - id: usage-record-schema
     name: "Validate usage record schema and fixtures"
@@ -1201,13 +1551,13 @@ capabilities:
       runtime: node@22
     command:
       - npm install
-      - bash scripts/tests/test-usage-record-schema.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-usage-record-schema.sh
 
   # release-notes renders an extension release note through the real
   # scripts/monorepo-release.sh configuration against a hermetic fixture
   # repository (issue #1225). Deliberately NOT changeset-gated, mirroring
   # usage-record-schema above: the fail-safe job (ci-changeset-coverage.sh)
-  # provisions no Node.
+  # provisions node@24 only, so a node@22 capability must never enter it.
   - id: release-notes
     name: "Render extension release notes through the monorepo release config"
     trigger:
@@ -1218,6 +1568,10 @@ capabilities:
           - "scripts/lib/release-notes/**"
           - "scripts/lib/monorepo-release-lib.sh"
           - "scripts/tests/test-monorepo-release-notes.sh"
+          - "scripts/lib/release-rehearse.mjs"
+          - "scripts/lib/release-pr.ts"
+          - "scripts/release-pr.ts"
+          - "scripts/tests/fixtures/release/forge-stub.mjs"
           - "package.json"
           - "package-lock.json"
       - on: push
@@ -1227,6 +1581,10 @@ capabilities:
           - "scripts/lib/release-notes/**"
           - "scripts/lib/monorepo-release-lib.sh"
           - "scripts/tests/test-monorepo-release-notes.sh"
+          - "scripts/lib/release-rehearse.mjs"
+          - "scripts/lib/release-pr.ts"
+          - "scripts/release-pr.ts"
+          - "scripts/tests/fixtures/release/forge-stub.mjs"
           - "package.json"
           - "package-lock.json"
     portability: portable
@@ -1235,12 +1593,13 @@ capabilities:
       tools: [jq]
     command:
       - npm ci
-      - bash scripts/tests/test-monorepo-release-notes.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-monorepo-release-notes.sh
 
   # usage-capture validates the spec 0206 capture-adapter module tree and the
   # spec 0211 per-CLI usage-capture opt-in (scripts/lib/usage-capture-optin.sh).
   # Deliberately NOT changeset-gated, mirroring usage-record-schema above:
-  # the fail-safe job (ci-changeset-coverage.sh) provisions no Node.
+  # the fail-safe job (ci-changeset-coverage.sh) provisions node@24 only, so a
+  # node@22 capability must never enter it.
   - id: usage-capture
     name: "Validate usage capture adapters and fixtures"
     trigger:
@@ -1299,16 +1658,16 @@ capabilities:
       runtime: node@22
     command:
       - npm install
-      - bash scripts/tests/test-usage-capture.sh
-      - bash scripts/tests/test-setup-usage-capture-optin.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-usage-capture.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-setup-usage-capture-optin.sh
 
   # usage-storage validates the usage-record storage contract (spec 0207):
   # the journal write path, the wing derivation, the drain/sweep, the mirror
   # gating and catch-up against a fake daemon, and the ajv-precompiled
   # standalone validator's own drift gate. Deliberately NOT changeset-gated,
   # for the same reason usage-record-schema above is not — a node@22
-  # capability must never enter the fail-safe job's python-only execution
-  # set.
+  # capability must never enter the fail-safe job's execution set (python@3.12,
+  # yq and node@24).
   - id: usage-storage
     name: "Validate the usage-record storage contract"
     trigger:
@@ -1319,12 +1678,14 @@ capabilities:
           - "scripts/usage-query.sh"
           - "scripts/usage-prune.sh"
           - "scripts/usage-mirror.sh"
+          - "scripts/usage-inventory.ts"
           - "scripts/usage-drain.sh"
           - "scripts/usage-task.sh"
           - "scripts/usage-attribute.sh"
           - "scripts/usage-backfill.sh"
           - "scripts/build-usage-validator.js"
           - "scripts/tests/test-usage-storage*.sh"
+          - "scripts/tests/usage-inventory.test.ts"
           - "scripts/tests/fixtures/usage-storage/**"
           - "schemas/**"
           - "package.json"
@@ -1338,12 +1699,14 @@ capabilities:
           - "scripts/usage-query.sh"
           - "scripts/usage-prune.sh"
           - "scripts/usage-mirror.sh"
+          - "scripts/usage-inventory.ts"
           - "scripts/usage-drain.sh"
           - "scripts/usage-task.sh"
           - "scripts/usage-attribute.sh"
           - "scripts/usage-backfill.sh"
           - "scripts/build-usage-validator.js"
           - "scripts/tests/test-usage-storage*.sh"
+          - "scripts/tests/usage-inventory.test.ts"
           - "scripts/tests/fixtures/usage-storage/**"
           - "schemas/**"
           - "package.json"
@@ -1352,11 +1715,21 @@ capabilities:
           - "docs/usage-organization.md"
     portability: portable
     requires:
-      runtime: node@22
+      # node@24 (bumped from node@22): scripts/usage-inventory.ts and its test
+      # run directly from .ts source via Node's built-in type stripping (spec
+      # 0238), which requires Node >= 24 — see DEVELOPMENT.md, "TypeScript
+      # toolchain and ratchet". Kept its own id, distinct from the `ratchet`/
+      # `lint-typescript` capabilities (spec 0238 R1-R8): this capability
+      # validates the usage-record storage contract, not the TypeScript
+      # toolchain itself, and no `tsc`/Oxlint/Oxfmt tool is needed here — a
+      # plain `node --test` on .ts sources needs no `npm ci` of its own beyond
+      # what this capability already runs for schema validation.
+      runtime: node@24
     command:
       - npm install
-      - bash scripts/tests/test-usage-storage.sh
-      - bash scripts/tests/test-usage-storage-mirror.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-usage-storage.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-usage-storage-mirror.sh
+      - node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tests/usage-inventory.test.ts
       - node scripts/build-usage-validator.js --check
 
   # usage-attribution validates spec 0208's declaration channels, attribution
@@ -1365,8 +1738,8 @@ capabilities:
   # override, and the registered-derived-store prune reach (spec 0207
   # delta-01 R28/R33). Deliberately NOT changeset-gated, for the same reason
   # usage-storage above is not — a node@22 capability must never enter the
-  # fail-safe job's python-only execution set. The capture tree is in the
-  # paths filter because the resolution point is scripts/lib/usage-capture/
+  # fail-safe job's execution set (python@3.12, yq and node@24). The capture
+  # tree is in the paths filter because the resolution point is scripts/lib/usage-capture/
   # index.js and the backfill's no-channel rule is backfill.js: without it,
   # an edit dropping the resolveAttribution() call would leave usage-capture
   # green (it asserts nothing about attribution), usage-storage green (it
@@ -1405,7 +1778,7 @@ capabilities:
       runtime: node@22
     command:
       - npm install
-      - bash scripts/tests/test-usage-attribution.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-usage-attribution.sh
 
   # usage-pricing validates spec 0209's comparative pricing engine: the
   # model-id resolution pipeline (exact/alias/family/org fallback), the
@@ -1417,11 +1790,18 @@ capabilities:
   # requires). Fully offline — a hand-built ~14-entry fixture price list,
   # never the real 2.9 MB snapshot. Deliberately NOT changeset-gated, for
   # the same reason usage-storage above is not — a node@22 capability must
-  # never enter the fail-safe job's python-only execution set. The
-  # usage-store tree is in the paths filter because step 9 of the plan puts
+  # never enter the fail-safe job's execution set (python@3.12, yq and
+  # node@24). The usage-store tree is in the paths filter because step 9 of the plan puts
   # both halves of the R37 mechanism there (derivedStores() in layout.js,
   # the walk in prune.js): without it, a changeset touching only layout.js
-  # or prune.js would not run the suite that owns the R37 assertion.
+  # or prune.js would not run the suite that owns the R37 assertion. The usage-dashboard
+  # tree and entry script are in the paths filter because the suite runs the dashboard
+  # (cases 17 and 19), so a change to either must run it.
+  # The three usage-store entry scripts (usage-attribute.sh, usage-prune.sh,
+  # usage-query.sh) are in the paths filter for the same reason: the suite runs
+  # them (the R37 prune cases 14 and 15, the case 17 period-rollup helper, the
+  # case 19 ledger writes), so a change to their exec line or argument handling
+  # must run it.
   - id: usage-pricing
     name: "Validate the usage-pricing model-id resolution, arithmetic, and prune reach"
     trigger:
@@ -1434,6 +1814,11 @@ capabilities:
           - "scripts/tests/fixtures/usage-pricing/**"
           - "model-prices.org.json"
           - "scripts/lib/usage-store/**"
+          - "scripts/usage-attribute.sh"
+          - "scripts/usage-prune.sh"
+          - "scripts/usage-query.sh"
+          - "scripts/lib/usage-dashboard/**"
+          - "scripts/usage-dashboard.sh"
           - "package.json"
           - "package-lock.json"
       - on: push
@@ -1445,6 +1830,11 @@ capabilities:
           - "scripts/tests/fixtures/usage-pricing/**"
           - "model-prices.org.json"
           - "scripts/lib/usage-store/**"
+          - "scripts/usage-attribute.sh"
+          - "scripts/usage-prune.sh"
+          - "scripts/usage-query.sh"
+          - "scripts/lib/usage-dashboard/**"
+          - "scripts/usage-dashboard.sh"
           - "package.json"
           - "package-lock.json"
     portability: portable
@@ -1452,7 +1842,7 @@ capabilities:
       runtime: node@22
     command:
       - npm install
-      - bash scripts/tests/test-usage-pricing.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-usage-pricing.sh
 
   # usage-dashboard is spec 0210's three-form agreement, injection and
   # loopback-bind suite (PLAN v2 steps 13-15). Fully offline, reusing the
@@ -1505,7 +1895,7 @@ capabilities:
       runtime: node@22
     command:
       - npm install
-      - bash scripts/tests/test-usage-dashboard.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-usage-dashboard.sh
 
   # gitlab-ci-check is the generator's own drift gate (spec 0048 R6/R7),
   # registered as a portable capability so the verification surface is itself
@@ -1607,6 +1997,33 @@ capabilities:
         (GitLab Pages is a distinct surface with its own job contract), so the
         deploy capability is hand-authored per engine, not generated.
 
+  # --- Engine-specific: Windows runner scaffolding (spec 0240 R12-R15) -----
+
+  # The reusable `windows-latest` job shape: Node.js 24 invoked from a
+  # non-POSIX interpreter (pwsh), the portable shared-module suites, and the
+  # timing-budget harness applied to the floor guard. Later sub-specs copy the
+  # job and record each copy here the same way.
+  - id: windows-node-floor-guard
+    name: "Windows scaffolding: floor guard, shared modules and timing budget"
+    trigger:
+      - on: pull-request
+        branches: [main, "release/**"]
+      - on: push
+        branches: [main, "release/**"]
+    portability: specific
+    exception:
+      engine: github-actions
+      evidence: >
+        Runs on the GitHub-hosted `windows-latest` runner
+        (.github/workflows/build.yml, job `windows-node-floor-guard`). GitLab
+        CI, as configured for this repository, exposes no Windows runner:
+        every generated GitLab job derives its `image` from
+        `requires.runtime` through `runtime_to_image`
+        (scripts/build-ci.sh lines 70-81), which maps only to Linux Docker
+        images, and .gitlab-ci.yml declares no runner `tags:` that could
+        select a Windows executor. There is no faithful equivalent on the
+        other supported engines (spec 0240 R15).
+
   # release-extension.yml (.github/workflows/release-extension.yml) is REMOVED
   # (spec 0183 R23, issue #1008): it packaged the committed source tree via
   # `npm pack`, a non-conforming release artifact under R17. The primary
@@ -1633,6 +2050,11 @@ capabilities:
   # release branch and to create tags); its GitHub value is
   # secrets.GITHUB_TOKEN. yq is required by the packager's render step
   # (scripts/build-extension.sh). Full history: the engine reads every tag.
+  # The business steps diverge on one point, inside the driver (issue #1379,
+  # docs/github-release-pr.md): on GitHub the release commit goes through a
+  # release PR (branch release-pr/main, required checks dispatched through
+  # build.yml's workflow_dispatch) because GitHub offers no ruleset bypass
+  # for the Actions token; GitLab keeps pushing it to the protected branch.
   - id: release
     name: "Run the monorepo semantic-release pipeline"
     trigger:
@@ -1673,10 +2095,11 @@ capabilities:
 
   # release-tests exercises the release driver (spec 0213 R17): the hermetic
   # driver test, the real-engine test against a local forge stub, and the
-  # lint-safe changelog facade test (issue #1364).
+  # lint-safe changelog facade test (issue #1364), and the GitHub release-PR
+  # sync test (issue #1379).
   # Deliberately NOT changeset-gated, for the same reason usage-storage above
   # is not — a node@22 capability must never enter the fail-safe job's
-  # python-only execution set.
+  # execution set (python@3.12, yq and node@24).
   - id: release-tests
     name: "Test the forge-aware monorepo release driver"
     trigger:
@@ -1686,6 +2109,10 @@ capabilities:
           - "scripts/monorepo-release.sh"
           - "scripts/lib/monorepo-release-lib.sh"
           - "scripts/lib/release-rehearse.mjs"
+          - "scripts/lib/release-pr.ts"
+          - "scripts/release-pr.ts"
+          - "scripts/tests/release-pr.test.ts"
+          - ".github/workflows/release-monorepo.yml"
           - "scripts/lib/release-notes/**"
           - "scripts/tests/test-monorepo-release*.sh"
           - "scripts/tests/release-changelog.test.ts"
@@ -1701,6 +2128,10 @@ capabilities:
           - "scripts/monorepo-release.sh"
           - "scripts/lib/monorepo-release-lib.sh"
           - "scripts/lib/release-rehearse.mjs"
+          - "scripts/lib/release-pr.ts"
+          - "scripts/release-pr.ts"
+          - "scripts/tests/release-pr.test.ts"
+          - ".github/workflows/release-monorepo.yml"
           - "scripts/lib/release-notes/**"
           - "scripts/tests/test-monorepo-release*.sh"
           - "scripts/tests/release-changelog.test.ts"
@@ -1716,6 +2147,7 @@ capabilities:
       tools: [jq, yq]
     command:
       - npm install --include=dev
-      - bash scripts/tests/test-monorepo-release.sh
-      - bash scripts/tests/test-monorepo-release-engine.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-monorepo-release.sh
+      - bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/test-monorepo-release-engine.sh
       - node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tests/release-changelog.test.ts
+      - node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tests/release-pr.test.ts
