@@ -48,6 +48,8 @@ Taskfile.yml	strict
 .gitattributes	strict
 .gitignore	strict
 .markdownlintrc	strict
+.oxfmtrc.json	strict
+.oxlintrc.json	strict
 package-lock.json	strict
 package.json	strict
 renovate.json	strict
@@ -109,6 +111,7 @@ artifacts/library
 .github/skills
 .github/agents	regenerable
 .github/workflows
+.github/actions
 # The `.agents` root is deliberately NOT claimed whole (spec 0121 → Out of
 # scope): no CLI output root is, and claiming this one would sweep in
 # `.agents/ANTIGRAVITY.md` and `.agents/settings.local.json.example` — the
