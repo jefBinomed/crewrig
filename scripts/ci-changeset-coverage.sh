@@ -1,31 +1,39 @@
 #!/usr/bin/env bash
-# ci-changeset-coverage.sh — Fail-safe for the check-components decomposition
-# (spec 0147 R5).
+# ci-changeset-coverage.sh — Exhaustive run of every changeset-gated check
+# (spec 0147 delta-01 R21).
 #
 # The monolithic `check-components` job was split into focused, changeset-gated
-# capabilities, each with a `paths:` filter. This script is the fail-safe: it
-# reads the focused `paths:` sets from ci/ci-capabilities.yml (via yq — never
-# hardcoded, to avoid drift), computes the changed files against the base ref,
-# and:
-#   - if EVERY changed file is covered by the union of the focused path sets,
-#     the focused jobs already covered the change → fast no-op (exit 0);
-#   - if ANY changed file is NOT covered, the change would otherwise slip
-#     through the focused gates → run the FULL check suite (all commands from
-#     the changeset-gated capabilities) so coverage is never reduced (R10).
+# capabilities, each with a `paths:` filter (spec 0147 R1-R4). A pull request
+# runs only the capabilities whose `paths:` it touches; the static
+# `path-ownership` check (scripts/check-path-ownership.ts) guarantees that every
+# tracked file is owned by one of them or carries a reasoned exemption.
 #
-# The focused groups are identified by the `changeset-gated: true` marker in
-# the reference (the check-components decomposition). The `changeset-coverage`
-# capability itself carries no such marker and no `paths:` filter, so it runs
-# on every change on both engines.
+# This script is the net underneath that guarantee. It has NO diff and NO base
+# ref: it reads the capabilities marked `changeset-gated: true` from
+# ci/ci-capabilities.yml (via yq — never hardcoded, to avoid drift) and runs
+# EVERY command of every one of them, unconditionally, in reference order. It
+# is triggered `scheduled` (daily) and `manual` — never on a pull request or a
+# push (see the `changeset-coverage` capability and
+# .github/workflows/changeset-coverage.yml).
 #
-# Base-ref resolution (first non-empty wins):
-#   CI_BASE_REF
-#   CI_MERGE_REQUEST_TARGET_BRANCH_SHA
-#   CI_COMMIT_BEFORE_SHA
-#   origin/main
-# If no base can be resolved, the script conservatively runs the full suite.
+# Exit status: 0 when every command passed; 1 when any command failed (the
+# remaining commands still run, so one run reports every failure); 2 when yq or
+# the reference is missing.
 #
-# Prerequisites: yq (mikefarah v4), git.
+# Stray scan (spec 0170 delta-01): every registered suite command in the
+# reference is declared as
+# `bash scripts/ci-cache-guard.sh --stray-scan -- bash scripts/tests/<suite>`.
+# This script `eval`s each reference command as written, so the exhaustive run
+# scans every suite for strays through its wrapped command, with no code here.
+# scripts/check-test-strays.sh executes no suite and only runs `bash -n`, so
+# there is nothing diff-scoped left to cover. The run executes every gated
+# command; it does not make each command itself exhaustive.
+#
+# The changeset-coverage job carries python@3.12 + node@24 + yq, which satisfies
+# every changeset-gated group's `requires` (a node@22 capability is therefore
+# never changeset-gated).
+#
+# Prerequisites: yq (mikefarah v4).
 
 set -euo pipefail
 
@@ -43,78 +51,8 @@ if [ ! -f "$REFERENCE" ]; then
   exit 2
 fi
 
-# --- Resolve the base ref ---------------------------------------------------
-
-base_ref=""
-for cand in "${CI_BASE_REF:-}" "${CI_MERGE_REQUEST_TARGET_BRANCH_SHA:-}" "${CI_COMMIT_BEFORE_SHA:-}"; do
-  if [ -n "$cand" ] && [ "$cand" != "null" ]; then
-    base_ref="$cand"
-    break
-  fi
-done
-if [ -z "$base_ref" ]; then
-  if git rev-parse --verify origin/main >/dev/null 2>&1; then
-    base_ref="origin/main"
-  fi
-fi
-
-# --- Collect the focused path sets (changeset-gated capabilities) -----------
-
-# Every capability marked `changeset-gated: true` is part of the decomposition.
-# Collect the union of their `paths:` filters (across all trigger entries).
-focused_paths=""
-while IFS= read -r id; do
-  [ -z "$id" ] && continue
-  while IFS= read -r p; do
-    [ -z "$p" ] && continue
-    focused_paths="${focused_paths}${p}"$'\n'
-  done < <(yq -r ".capabilities[] | select(.id == \"$id\" and .changeset-gated == true) | .trigger[].paths // [] | .[]" "$REFERENCE")
-done < <(yq -r '.capabilities[] | select(.changeset-gated == true) | .id' "$REFERENCE")
-
-# --- Compute changed files --------------------------------------------------
-
-if [ -z "$base_ref" ]; then
-  echo "ci-changeset-coverage: no base ref resolvable — running the full check suite (fail-safe)."
-  run_full_suite=1
-else
-  changed="$(git -C "$REPO_DIR" diff --name-only "$base_ref" HEAD 2>/dev/null || true)"
-  if [ -z "$changed" ]; then
-    echo "ci-changeset-coverage: no changed files vs $base_ref — nothing to cover."
-    exit 0
-  fi
-
-  # A changed file is covered iff it matches at least one focused path glob.
-  uncovered=""
-  while IFS= read -r file; do
-    [ -z "$file" ] && continue
-    covered=0
-    while IFS= read -r pat; do
-      [ -z "$pat" ] && continue
-      if [[ "$file" == $pat ]]; then
-        covered=1
-        break
-      fi
-    done <<< "$focused_paths"
-    if [ "$covered" -eq 0 ]; then
-      uncovered="${uncovered}${file}"$'\n'
-    fi
-  done <<< "$changed"
-
-  if [ -z "$uncovered" ]; then
-    echo "ci-changeset-coverage: every changed file is covered by a focused path set — fast no-op."
-    exit 0
-  fi
-
-  echo "ci-changeset-coverage: uncovered changed file(s):"
-  printf '%s' "$uncovered" | sed 's/^/  /'
-  echo "ci-changeset-coverage: running the full check suite (fail-safe, R5)."
-  run_full_suite=1
-fi
-
 # --- Run the full check suite ----------------------------------------------
-# All commands from the changeset-gated capabilities, in reference order. The
-# changeset-coverage job carries python@3.12 + yq, which satisfies every
-# changeset-gated group's requires (they are all satisfiable by that runtime).
+# All commands from the changeset-gated capabilities, in reference order.
 failures=0
 while IFS= read -r id; do
   [ -z "$id" ] && continue
@@ -129,7 +67,7 @@ while IFS= read -r id; do
 done < <(yq -r '.capabilities[] | select(.changeset-gated == true) | .id' "$REFERENCE")
 
 if [ "$failures" -gt 0 ]; then
-  echo "ci-changeset-coverage: $failures command(s) failed in the full check suite." >&2
+  echo "ci-changeset-coverage: $failures command(s) failed in the exhaustive run." >&2
   exit 1
 fi
-echo "ci-changeset-coverage: full check suite passed."
+echo "ci-changeset-coverage: exhaustive run passed."

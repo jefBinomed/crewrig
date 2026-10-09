@@ -1,0 +1,6 @@
+# Organization overlay (R24) — this fork's own path-ownership exemptions,
+# read in addition to the core list (ci/path-ownership-exemptions.txt).
+# Format: `<glob><TAB><reason>` (same rules as the core list). This file is
+# itself a tracked file, so it lists itself first (D7).
+ci/org/path-ownership-exemptions.txt	Adopter overlay list itself (R24/D7); no script or test reads it.
+.crewrig/.synced-markers/**	Per-path last-synced upstream blob SHAs written by scripts/sync-from-upstream.sh for adopt-on-edit tracking (spec 0020). This is fork-local sync state that only exists on a downstream adopter — the upstream canonical repo never generates it, so no capability's `paths:` filter claims it.

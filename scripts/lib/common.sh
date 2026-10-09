@@ -569,6 +569,87 @@ ensure_tier_built() {
   return 0
 }
 
+# install_production_dependencies <repo_dir>
+# The production-dependency step of spec 0240 R4-R6 (delta-01 R4/R5), shared
+# by the four scripts/setup-*-interactive.sh scripts so they cannot drift.
+#
+# Runs `npm ci --omit=dev --workspaces=false` at <repo_dir>, through
+# scripts/lib/tls-exec.sh so npm inherits the spec 0084 custom-CA trust, and
+# gates it on the SHA-256 of <repo_dir>/package-lock.json: the hash of the last
+# successful run is recorded in <repo_dir>/.crewrig-state/production-deps.sha256
+# (git-ignored, per checkout, outside node_modules/ so a contributor's full
+# `npm ci` from `task lint-bootstrap` does not erase it).
+#
+#   - node_modules/ missing        → the record is dropped, the step runs;
+#   - record equals the lock hash  → skip, with a named report and its reason;
+#   - otherwise                    → the record is dropped, then npm ci runs.
+#
+# On an npm failure: npm's own diagnostic is left on the terminal, a one-line
+# ERROR is printed, node_modules/ is removed (no partial tree is left looking
+# usable, R6), no record is written, and 1 is returned. Returns 0 on success
+# or skip; 1 when npm is missing or fails. The caller exits on 1.
+install_production_dependencies() {
+  local repo_dir="$1"
+  local lockfile="$repo_dir/package-lock.json"
+  local state_dir="$repo_dir/.crewrig-state"
+  local stamp="$state_dir/production-deps.sha256"
+  local lock_hash="" recorded="" tmp_stamp=""
+
+  # Refuse an empty or foreign directory before anything below can rm in it.
+  if [ -z "$repo_dir" ] || [ ! -f "$repo_dir/package.json" ]; then
+    echo "ERROR: install_production_dependencies: '$repo_dir' is not a repository checkout." >&2
+    return 1
+  fi
+
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "Error: npm is required but not installed (it ships with Node.js)." >&2
+    echo "Install Node.js 24 or later from https://nodejs.org/en/download" >&2
+    return 1
+  fi
+
+  if [ -f "$lockfile" ]; then
+    if command -v shasum >/dev/null 2>&1; then
+      lock_hash="$(shasum -a 256 "$lockfile" | cut -d' ' -f1)"
+    else
+      lock_hash="$(sha256sum "$lockfile" | cut -d' ' -f1)"
+    fi
+  fi
+
+  # A removed tree means there is no record of a successful run to trust.
+  if [ ! -d "$repo_dir/node_modules" ]; then
+    rm -f "$stamp"
+  fi
+
+  if [ -f "$stamp" ]; then
+    recorded="$(cat "$stamp")"
+  fi
+  if [ -n "$lock_hash" ] && [ "$recorded" = "$lock_hash" ]; then
+    echo "Production dependencies: skipped — package-lock.json unchanged since the last successful install (sha256 ${lock_hash:0:12}). Delete .crewrig-state/production-deps.sha256 to force a re-install."
+    return 0
+  fi
+
+  # Drop the record BEFORE installing so an interrupted install never leaves
+  # a stale one behind.
+  rm -f "$stamp"
+  echo "Production dependencies: running 'npm ci --omit=dev --workspaces=false'..."
+  if ! (cd "$repo_dir" && bash "$repo_dir/scripts/lib/tls-exec.sh" npm ci --omit=dev --workspaces=false); then
+    echo "ERROR: production dependency install failed — setup aborted; re-run setup once the cause above is fixed." >&2
+    rm -rf "$repo_dir/node_modules"
+    return 1
+  fi
+
+  # Record the run atomically. `set -e` does not apply inside a function
+  # called with `|| exit 1`, so every step is checked; a failed write only
+  # means the next setup re-runs the step, so it warns rather than aborts.
+  if mkdir -p "$state_dir" && tmp_stamp="$(mktemp "$state_dir/.production-deps.XXXXXX")" \
+    && printf '%s\n' "$lock_hash" >"$tmp_stamp" && mv -f "$tmp_stamp" "$stamp"; then
+    return 0
+  fi
+  [ -n "$tmp_stamp" ] && rm -f "$tmp_stamp"
+  echo "WARNING: could not record $stamp — the next setup run will re-install production dependencies." >&2
+  return 0
+}
+
 mempalace_installed_version() {
   "$1" -c "from importlib.metadata import version; print(version('mempalace'))" 2>/dev/null
 }
@@ -590,26 +671,163 @@ sys.exit(0 if mn <= v < mx else 1)
 EOF
 }
 
+# resolve_symlink <path>
+# Prints the path with every symlink hop followed and the directory component
+# normalised. Hand-rolled rather than `readlink -f`, which BSD readlink lacks on
+# older macOS — the two supported platforms must report the same fact.
+resolve_symlink() {
+  local target="$1" link hops=0
+  while [ -L "$target" ] && [ "$hops" -lt 32 ]; do
+    link="$(readlink "$target")"
+    case "$link" in
+      /*) target="$link" ;;
+      *)  target="$(dirname "$target")/${link}" ;;
+    esac
+    hops=$((hops + 1))
+  done
+  local dir
+  dir="$(cd "$(dirname "$target")" 2>/dev/null && pwd -P)"
+  if [ -z "$dir" ]; then
+    printf '%s' "$target"
+  else
+    printf '%s/%s' "$dir" "$(basename "$target")"
+  fi
+}
+
+# console_script_python <console-script-path>
+# Prints the Python interpreter a console script runs under, read from the
+# script as TEXT — the script itself is never executed. Returns non-zero when
+# no interpreter can be determined; a shell is never printed (issue #1417).
+#
+#   `#!/path/python`           -> /path/python
+#   `#!/usr/bin/env python3`   -> python3 (the second token)
+#   `#!/bin/sh` (or bash, dash, zsh, ksh — directly or via env) -> the polyglot
+#     wrapper pip/distlib and uv write when the venv path contains a space (the
+#     kernel cannot exec such a shebang), e.g. under macOS's default pipx home
+#     `~/Library/Application Support/pipx`:
+#         #!/bin/sh
+#         '''exec' "/venv path/bin/python" "$0" "$@"      (pip/distlib)
+#         '''exec' '/venv path/bin/python' "$0" "$@"      (uv)
+#         ' '''
+#     The interpreter is the quoted absolute path on line 2. Truncation is
+#     detected in the parse, never on the filesystem: the quoted path must be
+#     followed by the ` "$0"` token both tools write next, so a parse that stops
+#     early cannot match. A whole path is returned even when it does not exist
+#     or is a dangling symlink (a pipx venv after a Homebrew Python upgrade), as
+#     for a plain shebang, so the doctor names and probes the broken interpreter.
+#     - uv escapes an apostrophe in the single-quoted path as `'\''`; the escape
+#       is accepted and undone, so such a path resolves to its true full value.
+#     - distlib (`enquote_executable`) wraps the path in double quotes with NO
+#       escaping. A `"` in the path cannot match the anchored pattern; a `$`,
+#       backtick or backslash would be expanded by sh, so the text is not the
+#       path sh execs — both are rejected. So is an interpreter option written
+#       between the path and `"$0"` (distlib's `post_interp`).
+#     When line 2 yields no path (also distlib's relocatable form, which
+#     computes it at run time), the sibling `python` of the script's realpath is
+#     used when executable — a guess, so unlike a parsed path it must exist.
+console_script_python() {
+  local script="$1" line interp
+  local -a words
+  [ -f "$script" ] || return 1
+  line="$(head -n 1 "$script" 2>/dev/null)"
+  case "$line" in
+    '#!'*) ;;
+    *) return 1 ;;
+  esac
+  # `read -a`, not an unquoted `set --`: no pathname expansion of the line.
+  read -r -a words <<<"${line#\#!}"
+  interp="${words[0]:-}"
+  if [ "$(basename "${interp:-none}")" = "env" ]; then
+    interp="${words[1]:-}"
+  fi
+  [ -n "$interp" ] || return 1
+  case "$(basename "$interp")" in
+    sh|bash|dash|zsh|ksh) ;;
+    *)
+      printf '%s' "$interp"
+      return 0
+      ;;
+  esac
+
+  # Shell polyglot wrapper. The patterns live in variables so bash's `=~`
+  # treats them as regexes rather than literal strings. Both are anchored on
+  # the ` "$0"` that follows the quoted interpreter, so a truncated parse fails.
+  local exec_line py="" q="'"
+  local esc="'\\''"
+  local re_dq="^'''exec' \"(/[^\"]+)\" \"\\\$0\""
+  local re_sq="^'''exec' '(/([^']|'\\\\'')*)' \"\\\$0\""
+  exec_line="$(sed -n '2p' "$script" 2>/dev/null)"
+  if [[ "$exec_line" =~ $re_dq ]]; then
+    py="${BASH_REMATCH[1]}"
+    # distlib does not escape: sh would expand these, so the text is not the path.
+    case "$py" in
+      *'$'*|*'`'*|*\\*) py="" ;;
+    esac
+  elif [[ "$exec_line" =~ $re_sq ]]; then
+    py="${BASH_REMATCH[1]}"
+    py="${py//"$esc"/$q}"
+  fi
+  if [ -z "$py" ]; then
+    local sibling
+    sibling="$(dirname "$(resolve_symlink "$script")")/python"
+    [ -x "$sibling" ] && py="$sibling"
+  fi
+  [ -n "$py" ] || return 1
+  case "$(basename "$py")" in
+    sh|bash|dash|zsh|ksh) return 1 ;;
+  esac
+  printf '%s' "$py"
+}
+
+# mempalace_pipx_home
+# Prints the directory pipx installs venvs under, by pipx's own resolution
+# order: a non-empty PIPX_HOME; else the legacy `~/.local/pipx` when it exists;
+# else the platform default (`~/Library/Application Support/pipx` on macOS,
+# `${XDG_DATA_HOME:-~/.local/share}/pipx` elsewhere). Only directory existence
+# is consulted — pipx itself is neither required nor invoked.
+mempalace_pipx_home() {
+  if [ -n "${PIPX_HOME:-}" ]; then
+    printf '%s' "$PIPX_HOME"
+  elif [ -d "$HOME/.local/pipx" ]; then
+    printf '%s' "$HOME/.local/pipx"
+  elif [ "$(uname -s 2>/dev/null)" = "Darwin" ]; then
+    printf '%s' "$HOME/Library/Application Support/pipx"
+  else
+    printf '%s' "${XDG_DATA_HOME:-$HOME/.local/share}/pipx"
+  fi
+}
+
 # mempalace_python_candidates
 # Prints the interpreter candidates detect_mempalace_python considers, one per
-# line, highest priority first. Extracted from the helper below (spec 0108 R10)
-# so the operator diagnostic can report the very same ordered list the framework
-# would walk, and name a fallback selection instead of leaving it silent.
-# Candidate *ordering* only — no candidate is probed for a working mempalace
-# here; that is detect_mempalace_python's job.
+# line, highest priority first, without duplicates. Extracted from the helper
+# below (spec 0108 R10) so the operator diagnostic can report the very same
+# ordered list the framework would walk, and name a fallback selection instead
+# of leaving it silent. Candidate *ordering* only — no candidate is probed for a
+# working mempalace here; that is detect_mempalace_python's job.
+#
+#   1. the pipx venv, under the home pipx itself resolves (mempalace_pipx_home)
+#   2. the interpreter of the `mempalace` console script on PATH, read by
+#      console_script_python (shell wrappers resolved, never a shell)
+#   3. python3
+# Paths may contain spaces; one candidate per line, so consumers read lines.
 mempalace_python_candidates() {
   local candidates=()
-  candidates+=("$HOME/.local/pipx/venvs/mempalace/bin/python")
-  local mp_bin shebang_py
+  candidates+=("$(mempalace_pipx_home)/venvs/mempalace/bin/python")
+  local mp_bin script_py
   mp_bin="$(command -v mempalace 2>/dev/null || true)"
   if [ -n "$mp_bin" ] && [ -f "$mp_bin" ]; then
-    shebang_py="$(head -1 "$mp_bin" 2>/dev/null | sed -n 's|^#!\([^ ]*\).*|\1|p')"
-    [ -n "$shebang_py" ] && candidates+=("$shebang_py")
+    script_py="$(console_script_python "$mp_bin" || true)"
+    [ -n "$script_py" ] && candidates+=("$script_py")
   fi
   candidates+=("python3")
-  local py
+  local py seen=$'\n'
   for py in ${candidates[@]+"${candidates[@]}"}; do
-    [ -n "$py" ] && printf '%s\n' "$py"
+    [ -n "$py" ] || continue
+    case "$seen" in
+      *$'\n'"$py"$'\n'*) continue ;;
+    esac
+    seen="${seen}${py}"$'\n'
+    printf '%s\n' "$py"
   done
 }
 
@@ -974,6 +1192,30 @@ mcp_supervisor_pid() {
 
 mcp_launcher_installed_path() {
   printf '%s\n' "${MEMPALACE_MCP_LAUNCHER_PATH:-$HOME/.crewrig/mcp-daemon-launcher.sh}"
+}
+
+# mcp_installed_endpoint — the endpoint the INSTALLED launcher serves,
+# `http://<MCP_HOST>:<MCP_PORT>/mcp`, read from its two materialised lines with
+# the same rules as parseLauncher in scripts/lib/mempalace-registration.ts
+# (spec 0246 R1): the first `NAME="…"` line of each, a host of 1-64 characters
+# from [A-Za-z0-9.:[]-] (no "_": RFC 1123, and it rejects the __MCP_HOST__
+# placeholder), a port 1-65535 without a leading zero. Prints nothing
+# and returns 1 when the launcher is not a regular file, or a value is missing
+# or malformed (an unreplaced placeholder included): no daemon is installed.
+# sed runs byte-wise (LC_ALL=C) so a stray non-UTF-8 byte cannot abort it, and
+# the classes are spelled out rather than ranged so no locale's collation can
+# widen them.
+mcp_installed_endpoint() {
+  local launcher host port
+  local host_re='^[]ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.:[-]{1,64}$'
+  local port_re='^[123456789][0123456789]{0,4}$'
+  launcher="$(mcp_launcher_installed_path)"
+  [ -f "$launcher" ] || return 1
+  host="$(LC_ALL=C sed -n 's/^MCP_HOST="\([^"]*\)".*/\1/p' "$launcher" 2>/dev/null | head -n 1)"
+  port="$(LC_ALL=C sed -n 's/^MCP_PORT="\([^"]*\)".*/\1/p' "$launcher" 2>/dev/null | head -n 1)"
+  [[ "$host" =~ $host_re ]] || return 1
+  [[ "$port" =~ $port_re ]] && [ "$port" -le 65535 ] || return 1
+  printf 'http://%s:%s/mcp\n' "$host" "$port"
 }
 
 mcp_launcher_source_sha() {
@@ -1593,13 +1835,53 @@ mcp_assistant_arrangement() {
   return 0
 }
 
+# _mcp_endpoint_check <cli> <expected_url> — for an `http` arrangement, prints
+# one line `match|mismatch<TAB><redacted registered URL>`, read from the same
+# last extracted entry as mcp_assistant_arrangement (spec 0246 R3, R4). The URL
+# is redacted by the one algorithm the session check shares (R4, plan v4
+# *Contracts*, v4-F5): userinfo, then query and fragment (line breaks
+# included), then every C0/DEL/C1 control becomes `?`, then 120 code points. A
+# single registered value is `(.url // .serverUrl)` (spec 0246 delta-02 R3):
+# `url` unless it is null or false, else `serverUrl`. A value that is not a
+# string is a mismatch and prints the fixed text `(not a string)`, as the
+# check's classifyStrict does. Only the first output line is kept.
+_mcp_endpoint_check() {
+  local cfg
+  cfg="$(mcp_assistant_config_path "$1")" || return 1
+  [ -f "$cfg" ] || return 1
+  jq -r -s --arg expected "$2" '
+    [.[] | try (.mcpServers.mempalace // empty) catch empty] | last
+    | (.url // .serverUrl) as $u
+    | (if ($u | type) == "string" and $u == $expected then "match" else "mismatch" end) + "\t"
+      + (if ($u | type) != "string" then "(not a string)"
+         else $u | sub("^(?<s>([A-Za-z][A-Za-z0-9+.-]*://)?)[^/?#]*@"; "\(.s)")
+                 | sub("[?#][\\s\\S]*$"; "")
+                 | gsub("[\u0000-\u001f\u007f-\u009f]"; "?")
+                 | .[0:120]
+         end)' "$cfg" 2>/dev/null | head -n 1
+}
+
+# mcp_report_assistant_arrangements [daemon_status] [expected_url] — one line
+# per assistant. With an expected URL (status-mcp-server.sh passes the
+# installed launcher's), an `http` entry registered against another endpoint
+# reads `WRONG ENDPOINT` (spec 0246 R4); the return code is unchanged.
 mcp_report_assistant_arrangements() {
-  local daemon_status="${1:-}"
-  local cli state has_lockout=0
+  local daemon_status="${1:-}" expected="${2:-}"
+  local cli state has_lockout=0 check
   for cli in claude gemini copilot antigravity; do
     state="$(mcp_assistant_arrangement "$cli")"
     case "$state" in
-      http)    printf '  %-12s http (shared daemon)\n' "$cli" ;;
+      http)
+        check=""
+        [ -z "$expected" ] || check="$(_mcp_endpoint_check "$cli" "$expected")"
+        case "$check" in
+          mismatch$'\t'*)
+            printf '  %-12s http (WRONG ENDPOINT: registered %s, expected %s)\n' \
+              "$cli" "${check#*$'\t'}" "$expected"
+            ;;
+          *) printf '  %-12s http (shared daemon)\n' "$cli" ;;
+        esac
+        ;;
       stdio)
         if [ "$daemon_status" = "serving" ] || [ "$daemon_status" = "healthy" ]; then
           printf '  %-12s stdio (LOCKED OUT by shared daemon)\n' "$cli"
@@ -1633,7 +1915,9 @@ mcp_report_assistant_arrangements() {
 # — NEVER with /healthz (`_health_mcp_daemon`), whose endpoint is
 # require_auth=False and answers 200 in every state, satisfied by a stale
 # process and therefore green for exactly the wrong reason (the rationale for
-# retiring it as a serving predicate: spec 0139 delta-01 / issue #880). The
+# retiring it as a serving predicate: docs/runbooks/mempalace-mcp-server.md →
+# "Checking it is actually serving, and actually authenticated", the header of
+# scripts/status-mcp-server.sh, and issue #880). The
 # token is read tolerantly BEFORE the probe — a token failure must never abort
 # before the probe, because converging stdio against a daemon that would have
 # answered is exactly the lockout R20 forbids; an unreadable token probes with

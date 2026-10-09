@@ -157,6 +157,10 @@ fi  # end: SKIP_RULES_CONFIG guard for shared configuration
 offer_tls_delegation
 echo ""
 
+# --- Production dependencies (spec 0240 R4-R6; after the spec 0084 TLS offer) ---
+install_production_dependencies "$REPO_DIR" || exit 1
+echo ""
+
 # --- MCP server registration via 'claude mcp add' ---
 # Claude Code reads MCP servers from ~/.claude.json (managed by 'claude mcp ...').
 # The legacy ~/.claude/mcp.json file is NOT read by Claude Code — we no longer write it.
@@ -523,6 +527,9 @@ else
   fi
   usage_capture_apply claude "$SETTINGS_TARGET" "$REPO_DIR" "$UC_STATE" "$UC_ANSWER" || echo "  Usage-capture step FAILED — setup continues." >&2
 fi
+
+# --- MemPalace session-start check (spec 0246 R11): unconditional, last hook writer ---
+{ command -v node >/dev/null 2>&1 && node "$REPO_DIR/scripts/lib/node-floor-guard.js" && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON "$REPO_DIR/scripts/session-check-hooks.ts" register claude; } || echo "  Session check registration FAILED — setup continues." >&2
 
 echo ""
 echo "===================================="

@@ -219,6 +219,10 @@ fi
 offer_tls_delegation
 echo ""
 
+# --- Production dependencies (spec 0240 R4-R6; after the spec 0084 TLS offer) ---
+install_production_dependencies "$REPO_DIR" || exit 1
+echo ""
+
 # --- MCP server configuration (~/.copilot/mcp-config.json) ---
 echo "Configuring ~/.copilot/mcp-config.json..."
 MCP_CONFIG_TARGET="$COPILOT_HOME/mcp-config.json"
@@ -471,6 +475,9 @@ else
   fi
   usage_capture_apply copilot "$USER_HOOKS_JSON" "$REPO_DIR" "$UC_STATE" "$UC_ANSWER" || echo "  Usage-capture step FAILED — setup continues." >&2
 fi
+
+# --- MemPalace session-start check (spec 0246 R11): unconditional, last hook writer ---
+{ command -v node >/dev/null 2>&1 && node "$REPO_DIR/scripts/lib/node-floor-guard.js" && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON "$REPO_DIR/scripts/session-check-hooks.ts" register copilot; } || echo "  Session check registration FAILED — setup continues." >&2
 
 echo ""
 echo "===================================="
