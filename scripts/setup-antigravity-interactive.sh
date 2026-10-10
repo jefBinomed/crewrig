@@ -470,7 +470,8 @@ fi
 
 echo ""
 
-# --- Usage capture: statusline channel (opt-in) --- (spec 0206)
+# --- Antigravity status line: usage capture + enhanced rendering (opt-in) ---
+# (spec 0206; unified with the enhanced render feature by spec 0249 delta-01)
 #
 # No lifecycle hook event exists for this channel on Antigravity CLI — the
 # display-command invocation the CLI already makes for a user-configured
@@ -482,75 +483,175 @@ echo ""
 #
 # hooks/antigravity-statusline-shim.sh is NEVER copied out of the repository
 # (same class as hooks/usage-capture.sh): the installer wires
-# statusLine.command to its own in-repo absolute path, ONLY when that value
-# was previously empty (R20) — a populated foreign value is left untouched
-# and the parity gap is recorded instead of installing a shim over it.
-STATUSLINE_SCRIPT_SRC="$REPO_DIR/hooks/antigravity-statusline-shim.sh"
-STATUSLINE_ABS="$(cd "$(dirname "$STATUSLINE_SCRIPT_SRC")" && pwd -P)/$(basename "$STATUSLINE_SCRIPT_SRC")"
+# statusLine.command to its own in-repo absolute path. One marker file now
+# carries TWO independent flags — usageCaptureEnabled and renderEnabled —
+# since both concerns share the shim and the statusLine.command slot. A
+# legacy marker (neither key present) is MIGRATED, not defaulted:
+# usageCaptureEnabled:true (it was already active), renderEnabled:false (new).
+STATUSLINE_SHIM_SRC="$REPO_DIR/hooks/antigravity-statusline-shim.sh"
+STATUSLINE_ABS="$(cd "$(dirname "$STATUSLINE_SHIM_SRC")" && pwd -P)/$(basename "$STATUSLINE_SHIM_SRC")"
+STATUSLINE_RENDER_SRC="$REPO_DIR/scripts/lib/statusline-antigravity.py"
 AGY_SETTINGS="$AGY_HOME/settings.json"
+AGY_STATUSLINE_SCRIPT="$AGY_HOME/statusline.py"
 CREWRIG_USAGE_ROOT="${CREWRIG_USAGE_ROOT:-${HOME}/.crewrig/usage}"
 STATUSLINE_MARKER="$CREWRIG_USAGE_ROOT/state/antigravity-statusline.json"
+
+# --- Marker schema migration (atomic .tmp + mv, same pattern as every other
+# write in this function) ---
+USAGE_CAPTURE_ENABLED="false"
+RENDER_ENABLED="false"
+if [ -f "$STATUSLINE_MARKER" ]; then
+  HAS_USAGE_KEY="$(jq 'has("usageCaptureEnabled")' "$STATUSLINE_MARKER" 2>/dev/null)"
+  HAS_RENDER_KEY="$(jq 'has("renderEnabled")' "$STATUSLINE_MARKER" 2>/dev/null)"
+  if [ "$HAS_USAGE_KEY" = "true" ] || [ "$HAS_RENDER_KEY" = "true" ]; then
+    USAGE_CAPTURE_ENABLED="$(jq -r '.usageCaptureEnabled // false' "$STATUSLINE_MARKER" 2>/dev/null)"
+    RENDER_ENABLED="$(jq -r '.renderEnabled // false' "$STATUSLINE_MARKER" 2>/dev/null)"
+  else
+    USAGE_CAPTURE_ENABLED="true"
+    RENDER_ENABLED="false"
+    if jq '. + {usageCaptureEnabled: true, renderEnabled: false}' "$STATUSLINE_MARKER" \
+        > "${STATUSLINE_MARKER}.tmp" 2>/dev/null && mv "${STATUSLINE_MARKER}.tmp" "$STATUSLINE_MARKER"; then
+      echo "  Migrated legacy statusline marker to the two-flag schema (usage capture kept enabled)."
+    else
+      rm -f "${STATUSLINE_MARKER}.tmp"
+      echo "  WARNING: could not persist statusline marker migration — using in-memory defaults for this run (retries next run)." >&2
+    fi
+  fi
+fi
+
+CURRENT_STATUSLINE=""
+if [ -f "$AGY_SETTINGS" ]; then
+  CURRENT_STATUSLINE="$(jq -r '.statusLine.command // empty' "$AGY_SETTINGS" 2>/dev/null)"
+fi
 
 STATUSLINE_INSTALLED_BY_US=0
 if [ -f "$STATUSLINE_MARKER" ]; then
   INSTALLED_CMD="$(jq -r '.installedStatusLineCommand // empty' "$STATUSLINE_MARKER" 2>/dev/null)"
-  CURRENT_CMD_CHECK=""
-  if [ -f "$AGY_SETTINGS" ]; then
-    CURRENT_CMD_CHECK="$(jq -r '.statusLine.command // empty' "$AGY_SETTINGS" 2>/dev/null)"
-  fi
-  if [ -n "$INSTALLED_CMD" ] && [ "$INSTALLED_CMD" = "$CURRENT_CMD_CHECK" ]; then
+  if [ -n "$INSTALLED_CMD" ] && [ "$INSTALLED_CMD" = "$CURRENT_STATUSLINE" ]; then
     STATUSLINE_INSTALLED_BY_US=1
   fi
 fi
 
-if [ "$STATUSLINE_INSTALLED_BY_US" -eq 1 ]; then
+# --- Two independent yes/no questions, each keep/remove on re-run ---
+NEW_USAGE_CAPTURE_ENABLED="$USAGE_CAPTURE_ENABLED"
+NEW_RENDER_ENABLED="$RENDER_ENABLED"
+
+if [ "$STATUSLINE_INSTALLED_BY_US" -eq 1 ] && [ "$USAGE_CAPTURE_ENABLED" = "true" ]; then
   echo "Antigravity usage capture is installed (statusLine.command wired to $INSTALLED_CMD)."
-  STATUSLINE_ACTION=$(echo -e "keep\nremove" | fzf --height 10% \
-    --header "Antigravity usage capture is installed — keep it, or remove it (restores the prior statusLine.command, R21)?")
-  if [ "$STATUSLINE_ACTION" = "remove" ]; then
-    PRIOR_CMD="$(jq -r '.priorStatusLineCommand // empty' "$STATUSLINE_MARKER" 2>/dev/null)"
-    backup_file "$AGY_SETTINGS"
-    if [ -n "$PRIOR_CMD" ]; then
-      jq --arg cmd "$PRIOR_CMD" '.statusLine.command = $cmd' "$AGY_SETTINGS" > "${AGY_SETTINGS}.tmp" && mv "${AGY_SETTINGS}.tmp" "$AGY_SETTINGS"
-    else
-      jq 'del(.statusLine.command)' "$AGY_SETTINGS" > "${AGY_SETTINGS}.tmp" && mv "${AGY_SETTINGS}.tmp" "$AGY_SETTINGS"
-    fi
-    rm -f "$STATUSLINE_MARKER"
-    echo "  Antigravity usage capture removed; statusLine.command restored to its prior value."
-  else
-    echo "  Antigravity usage capture kept."
+  USAGE_CAPTURE_ACTION=$(echo -e "keep\nremove" | fzf --height 10% \
+    --header "Antigravity usage capture is installed — keep it, or remove it?")
+  if [ "$USAGE_CAPTURE_ACTION" = "remove" ]; then
+    NEW_USAGE_CAPTURE_ENABLED="false"
   fi
 else
   ENABLE_USAGE_CAPTURE=$(echo -e "no\nyes" | fzf --height 10% --header "Enable Antigravity CLI usage capture (statusline channel, opt-in)?")
   if [ "$ENABLE_USAGE_CAPTURE" = "yes" ]; then
-    CURRENT_STATUSLINE=""
-    if [ -f "$AGY_SETTINGS" ]; then
-      CURRENT_STATUSLINE="$(jq -r '.statusLine.command // empty' "$AGY_SETTINGS" 2>/dev/null)"
-    fi
-    if [ -n "$CURRENT_STATUSLINE" ]; then
-      echo "  statusLine.command already carries a value this framework did not install:"
-      echo "    $CURRENT_STATUSLINE"
-      echo "  Leaving it untouched (R20) — per-request/per-subagent usage capture stays"
-      echo "  unavailable for Antigravity CLI on this installation (documented parity gap,"
-      echo "  R22: no field of this CLI's own session record ties to a token count, and no"
-      echo "  vendor-documented alternative channel exposes that granularity today)."
-    else
-      mkdir -p "$(dirname "$STATUSLINE_MARKER")"
-      mkdir -p "$AGY_HOME"
-      [ -f "$AGY_SETTINGS" ] || echo "{}" > "$AGY_SETTINGS"
-      backup_file "$AGY_SETTINGS"
-      jq --arg cmd "$STATUSLINE_ABS" '.statusLine = ((.statusLine // {}) + {command: $cmd})' \
-        "$AGY_SETTINGS" > "${AGY_SETTINGS}.tmp" && mv "${AGY_SETTINGS}.tmp" "$AGY_SETTINGS"
-      jq -n --arg prior "$CURRENT_STATUSLINE" --arg installed "$STATUSLINE_ABS" \
-        '{priorStatusLineCommand: $prior, installedStatusLineCommand: $installed, installedBy: "crewrig-setup-antigravity-interactive"}' \
-        > "${STATUSLINE_MARKER}.tmp" && mv "${STATUSLINE_MARKER}.tmp" "$STATUSLINE_MARKER"
-      echo "  Usage capture wired to $STATUSLINE_ABS (in-repo absolute path)"
-      warn_if_linked_worktree "$REPO_DIR" "usage capture"
-      echo "  Prior statusLine.command (empty) recorded at $STATUSLINE_MARKER"
-    fi
-  else
-    echo "  Antigravity usage capture disabled (can enable later by re-running this script)."
+    NEW_USAGE_CAPTURE_ENABLED="true"
   fi
+fi
+
+if [ "$STATUSLINE_INSTALLED_BY_US" -eq 1 ] && [ "$RENDER_ENABLED" = "true" ]; then
+  echo "Antigravity enhanced status-line rendering is installed."
+  RENDER_ACTION=$(echo -e "keep\nremove" | fzf --height 10% \
+    --header "Antigravity enhanced status-line rendering is installed — keep it, or remove it?")
+  if [ "$RENDER_ACTION" = "remove" ]; then
+    NEW_RENDER_ENABLED="false"
+  fi
+else
+  ENABLE_RENDER=$(echo -e "no\nyes" | fzf --height 10% \
+    --header "Enable the CrewRig-enhanced Antigravity status-line visual rendering (opt-in)?")
+  if [ "$ENABLE_RENDER" = "yes" ]; then
+    NEW_RENDER_ENABLED="true"
+  fi
+fi
+
+IS_ANY_ENABLED=0
+if [ "$NEW_USAGE_CAPTURE_ENABLED" = "true" ] || [ "$NEW_RENDER_ENABLED" = "true" ]; then
+  IS_ANY_ENABLED=1
+fi
+
+# Whether statusLine.command needs to be (re)wired to us, or torn down, is
+# driven by STATUSLINE_INSTALLED_BY_US (the ACTUAL current wiring) rather
+# than the marker's stored flags — a marker that says "enabled" while
+# statusLine.command has since been hijacked by something else must still
+# rewire on re-enable, not silently no-op (i1-F2).
+NEEDS_WIRE=0
+if [ "$IS_ANY_ENABLED" -eq 1 ] && [ "$STATUSLINE_INSTALLED_BY_US" -ne 1 ]; then
+  NEEDS_WIRE=1
+fi
+NEEDS_REMOVE=0
+if [ "$IS_ANY_ENABLED" -eq 0 ] && [ "$STATUSLINE_INSTALLED_BY_US" -eq 1 ]; then
+  NEEDS_REMOVE=1
+fi
+
+# R7 preview-and-choose: a foreign, non-us value about to be (re)wired.
+if [ "$NEEDS_WIRE" -eq 1 ] && [ -n "$CURRENT_STATUSLINE" ]; then
+  echo "  statusLine.command already carries a value this framework did not install:"
+  echo "    $CURRENT_STATUSLINE"
+  STATUSLINE_PREVIEW_ACTION=$(echo -e "keep-existing\nreplace-with-crewrig" | fzf --height 10% \
+    --header "Replace existing statusLine.command ($CURRENT_STATUSLINE) with CrewRig's unified statusline ($STATUSLINE_ABS)?")
+  if [ "$STATUSLINE_PREVIEW_ACTION" != "replace-with-crewrig" ]; then
+    echo "  Keeping existing statusLine.command untouched — usage capture / enhanced rendering stay unavailable on this installation."
+    NEW_USAGE_CAPTURE_ENABLED="false"
+    NEW_RENDER_ENABLED="false"
+    IS_ANY_ENABLED=0
+    NEEDS_WIRE=0
+  fi
+fi
+
+if [ "$NEEDS_WIRE" -eq 1 ]; then
+  mkdir -p "$(dirname "$STATUSLINE_MARKER")"
+  mkdir -p "$AGY_HOME"
+  [ -f "$AGY_SETTINGS" ] || echo "{}" > "$AGY_SETTINGS"
+  backup_file "$AGY_SETTINGS"
+  jq --arg cmd "$STATUSLINE_ABS" '.statusLine = ((.statusLine // {}) + {command: $cmd})' \
+    "$AGY_SETTINGS" > "${AGY_SETTINGS}.tmp" && mv "${AGY_SETTINGS}.tmp" "$AGY_SETTINGS"
+  jq -n --arg prior "$CURRENT_STATUSLINE" --arg installed "$STATUSLINE_ABS" \
+    --argjson usage "$NEW_USAGE_CAPTURE_ENABLED" --argjson render "$NEW_RENDER_ENABLED" \
+    '{priorStatusLineCommand: $prior, installedStatusLineCommand: $installed, installedBy: "crewrig-setup-antigravity-interactive", usageCaptureEnabled: $usage, renderEnabled: $render}' \
+    > "${STATUSLINE_MARKER}.tmp" && mv "${STATUSLINE_MARKER}.tmp" "$STATUSLINE_MARKER"
+  echo "  Antigravity status line wired to $STATUSLINE_ABS (in-repo absolute path)"
+  warn_if_linked_worktree "$REPO_DIR" "usage capture"
+  echo "  Prior statusLine.command (${CURRENT_STATUSLINE:-empty}) recorded at $STATUSLINE_MARKER"
+elif [ "$NEEDS_REMOVE" -eq 1 ]; then
+  # Full removal: restore priorStatusLineCommand, restore/delete statusline.py.
+  PRIOR_CMD="$(jq -r '.priorStatusLineCommand // empty' "$STATUSLINE_MARKER" 2>/dev/null)"
+  backup_file "$AGY_SETTINGS"
+  if [ -n "$PRIOR_CMD" ]; then
+    jq --arg cmd "$PRIOR_CMD" '.statusLine.command = $cmd' "$AGY_SETTINGS" > "${AGY_SETTINGS}.tmp" && mv "${AGY_SETTINGS}.tmp" "$AGY_SETTINGS"
+  else
+    jq 'del(.statusLine.command)' "$AGY_SETTINGS" > "${AGY_SETTINGS}.tmp" && mv "${AGY_SETTINGS}.tmp" "$AGY_SETTINGS"
+  fi
+  if [ -f "$AGY_STATUSLINE_SCRIPT" ]; then
+    LATEST_SCRIPT_BACKUP="$(ls -1t "${AGY_STATUSLINE_SCRIPT}".bak.* 2>/dev/null | head -n1)"
+    if [ -n "$LATEST_SCRIPT_BACKUP" ]; then
+      mv "$LATEST_SCRIPT_BACKUP" "$AGY_STATUSLINE_SCRIPT"
+    else
+      rm -f "$AGY_STATUSLINE_SCRIPT"
+    fi
+  fi
+  rm -f "$STATUSLINE_MARKER"
+  echo "  Antigravity status line removed; statusLine.command restored to its prior value."
+else
+  if [ "$STATUSLINE_INSTALLED_BY_US" -eq 1 ]; then
+    jq --argjson usage "$NEW_USAGE_CAPTURE_ENABLED" --argjson render "$NEW_RENDER_ENABLED" \
+      '.usageCaptureEnabled = $usage | .renderEnabled = $render' \
+      "$STATUSLINE_MARKER" > "${STATUSLINE_MARKER}.tmp" && mv "${STATUSLINE_MARKER}.tmp" "$STATUSLINE_MARKER"
+    echo "  Antigravity status line flags updated (usage capture: $NEW_USAGE_CAPTURE_ENABLED, enhanced rendering: $NEW_RENDER_ENABLED)."
+  else
+    echo "  Antigravity status line left untouched."
+  fi
+fi
+
+# renderEnabled -> true: copy (never symlink, never an in-repo-path
+# reference) the vendored script to its installed location, backing up any
+# previous copy first.
+if [ "$NEW_RENDER_ENABLED" = "true" ] && [ "$RENDER_ENABLED" != "true" ]; then
+  mkdir -p "$AGY_HOME"
+  backup_file "$AGY_STATUSLINE_SCRIPT"
+  cp "$STATUSLINE_RENDER_SRC" "$AGY_STATUSLINE_SCRIPT"
+  chmod +x "$AGY_STATUSLINE_SCRIPT"
+  echo "  Installed enhanced status-line script: $AGY_STATUSLINE_SCRIPT"
 fi
 
 # --- MemPalace session-start check (spec 0246 R8, R11): registered only while ANTIGRAVITY_SESSION_CHECK says so ---

@@ -265,6 +265,8 @@ The shim **is never copied** to `~/.claude/hooks/`, `~/.gemini/hooks/`, or `~/.c
 
 The `hooks/antigravity-statusline-shim.sh` is installed into `statusLine.command` of `~/.gemini/antigravity-cli/settings.json` **only when that value is empty** (spec 0206 R20). The prior value and a "framework-installed" marker are recorded in `~/.crewrig/usage/state/antigravity-statusline.json`. Removal restores exactly the prior value (spec 0206 R21).
 
+**Spec 0249 delta-01** adds a second concern — enhanced status-line rendering — to this same shim and this same marker file, which now carries an independent `renderEnabled` flag alongside this section's `usageCaptureEnabled`. The capture call documented above is unaffected (unconditional, unchanged); see [`docs/statusline-rendering.md`](statusline-rendering.md) for the render concern, the two-flag marker schema and its legacy-marker migration, and the shim's full three-concern (render / capture / legacy-prior-command-forward) composition contract.
+
 The shim is **not copied** to `~/.gemini/antigravity-cli/`; it lives at its in-repo absolute path, computed the same way:
 
 ```bash
