@@ -306,6 +306,90 @@ elif [ -f "$SETTINGS_TARGET" ]; then
 fi
 echo ""
 
+# --- Status line: ccstatusline (opt-in) --- (spec 0249 delta-01 R5, R16)
+#
+# ccstatusline is a third-party, actively-maintained statusline renderer for
+# Claude Code. CrewRig only ensures it is installed and wires `statusLine` to
+# invoke it; it never reads or writes the separate per-user configuration
+# file ccstatusline maintains for its own segment layout, which stays
+# entirely user-owned.
+CCSTATUSLINE_MARKER="${HOME}/.crewrig/statusline/state/claude-statusline.json"
+CCSTATUSLINE_CURRENT_CMD=""
+if [ -f "$SETTINGS_TARGET" ]; then
+  CCSTATUSLINE_CURRENT_CMD="$(jq -r '.statusLine.command // empty' "$SETTINGS_TARGET" 2>/dev/null)"
+fi
+
+CCSTATUSLINE_INSTALLED_BY_US=0
+if [ -f "$CCSTATUSLINE_MARKER" ] && echo "$CCSTATUSLINE_CURRENT_CMD" | grep -q 'ccstatusline'; then
+  CCSTATUSLINE_INSTALLED_BY_US=1
+fi
+
+if [ "$CCSTATUSLINE_INSTALLED_BY_US" -eq 1 ]; then
+  CCSTATUSLINE_ACTION=$(echo -e "keep\nremove" | fzf --height 10% \
+    --header "ccstatusline is wired to Claude Code's statusLine — keep it, or remove it (restores the prior value)?")
+  if [ "$CCSTATUSLINE_ACTION" = "remove" ]; then
+    CCSTATUSLINE_PRIOR_CMD="$(jq -r '.priorStatusLineCommand // empty' "$CCSTATUSLINE_MARKER" 2>/dev/null)"
+    backup_file "$SETTINGS_TARGET"
+    if [ -n "$CCSTATUSLINE_PRIOR_CMD" ]; then
+      jq --arg cmd "$CCSTATUSLINE_PRIOR_CMD" '.statusLine.command = $cmd' "$SETTINGS_TARGET" > "${SETTINGS_TARGET}.tmp" && mv "${SETTINGS_TARGET}.tmp" "$SETTINGS_TARGET"
+    else
+      jq 'del(.statusLine)' "$SETTINGS_TARGET" > "${SETTINGS_TARGET}.tmp" && mv "${SETTINGS_TARGET}.tmp" "$SETTINGS_TARGET"
+    fi
+    rm -f "$CCSTATUSLINE_MARKER"
+    echo "  ccstatusline removed from Claude Code's statusLine; prior value restored."
+  else
+    echo "  ccstatusline kept."
+  fi
+else
+  ENABLE_CCSTATUSLINE=$(echo -e "no\nyes" | fzf --height 10% --header "Enable ccstatusline for Claude Code's status line (opt-in)?")
+  if [ "$ENABLE_CCSTATUSLINE" = "yes" ]; then
+    if ! command -v ccstatusline >/dev/null 2>&1; then
+      if command -v npm >/dev/null 2>&1; then
+        echo "  ccstatusline not found — installing (npm install -g ccstatusline)..."
+        bash "$REPO_DIR/scripts/lib/tls-exec.sh" npm install -g ccstatusline \
+          || echo "  WARNING: ccstatusline install failed — statusLine will not be wired." >&2
+      else
+        echo "  WARNING: npm not found — cannot install ccstatusline. Install it manually, then re-run this script." >&2
+      fi
+    fi
+    if command -v ccstatusline >/dev/null 2>&1; then
+      [ -f "$SETTINGS_TARGET" ] || echo "{}" > "$SETTINGS_TARGET"
+      CCSTATUSLINE_CURRENT_CMD="$(jq -r '.statusLine.command // empty' "$SETTINGS_TARGET" 2>/dev/null)"
+      mkdir -p "$(dirname "$CCSTATUSLINE_MARKER")"
+      if echo "$CCSTATUSLINE_CURRENT_CMD" | grep -q 'ccstatusline'; then
+        echo "  statusLine is already wired to ccstatusline — leaving it as-is."
+        jq -n --arg prior "" '{priorStatusLineCommand: $prior, installedBy: "crewrig-setup-claude-interactive"}' \
+          > "${CCSTATUSLINE_MARKER}.tmp" && mv "${CCSTATUSLINE_MARKER}.tmp" "$CCSTATUSLINE_MARKER"
+      else
+        CCSTATUSLINE_DO_WIRE=1
+        if [ -n "$CCSTATUSLINE_CURRENT_CMD" ]; then
+          echo "  statusLine.command already carries a value this framework did not install:"
+          echo "    $CCSTATUSLINE_CURRENT_CMD"
+          CCSTATUSLINE_REPLACE=$(echo -e "keep-existing\nreplace-with-ccstatusline" | fzf --height 10% \
+            --header "Replace existing statusLine.command ($CCSTATUSLINE_CURRENT_CMD) with ccstatusline?")
+          if [ "$CCSTATUSLINE_REPLACE" != "replace-with-ccstatusline" ]; then
+            CCSTATUSLINE_DO_WIRE=0
+            echo "  Keeping existing statusLine.command untouched."
+          fi
+        fi
+        if [ "$CCSTATUSLINE_DO_WIRE" -eq 1 ]; then
+          backup_file "$SETTINGS_TARGET"
+          jq '.statusLine = ((.statusLine // {}) + {type:"command", command:"ccstatusline", padding:0, refreshInterval:10})' \
+            "$SETTINGS_TARGET" > "${SETTINGS_TARGET}.tmp" && mv "${SETTINGS_TARGET}.tmp" "$SETTINGS_TARGET"
+          mkdir -p "$(dirname "$CCSTATUSLINE_MARKER")"
+          jq -n --arg prior "$CCSTATUSLINE_CURRENT_CMD" \
+            '{priorStatusLineCommand: $prior, installedBy: "crewrig-setup-claude-interactive"}' \
+            > "${CCSTATUSLINE_MARKER}.tmp" && mv "${CCSTATUSLINE_MARKER}.tmp" "$CCSTATUSLINE_MARKER"
+          echo "  Claude Code statusLine wired to ccstatusline."
+        fi
+      fi
+    fi
+  else
+    echo "  ccstatusline disabled (can enable later by re-running this script)."
+  fi
+fi
+echo ""
+
 if [ "$SKIP_RULES_CONFIG" -ne 1 ]; then
 
 # --- Team selection ---
