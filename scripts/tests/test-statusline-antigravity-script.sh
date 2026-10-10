@@ -27,6 +27,10 @@
 #     stdout, never a half-rendered line — proving the blanket
 #     `try/except Exception: pass` wrapping main()'s post-parse body actually
 #     works, not merely that each helper is individually defensive.
+#   R3/R4/R18 (i1-F1 regression guard) — an absent or empty-string
+#     `vcs.branch` omits the branch/dirty/changes segment entirely and NEVER
+#     shells out to `git` as a fallback (a `git` stub that leaves a sentinel
+#     file when invoked proves zero calls, not merely a graceful failure).
 #
 # HERMETIC: HOME is sandboxed to a temp directory for every invocation, so the
 # TTL cache (~/.crewrig/statusline/cache/) and the pinned-pricelist lookup
@@ -272,6 +276,82 @@ if [ "$STATUS_4B" -eq 0 ] && [ "$BYTES_4B" -eq 0 ]; then
   ok "R4/R10: a forced internal exception after parsing still exits 0 with zero bytes of stdout"
 else
   bad "R4/R10: forced-exception case failed (exit $STATUS_4B, $BYTES_4B bytes of stdout: $(cat "$OUT_4B"))"
+fi
+
+echo ""
+# ---------------------------------------------------------------------------
+echo "§5 vcs.branch absent/empty omits the VCS segment, no git subprocess (R3/R4/R18)"
+# ---------------------------------------------------------------------------
+# i1-F1 regression guard: an earlier revision called get_git_branch() (a
+# `git rev-parse` subprocess) as a fallback whenever the native payload's
+# vcs.branch was empty/absent. That violates R18 (omit, don't derive via a
+# subprocess outside R19's own narrow carve-out) and R2 (no extra subprocess).
+# The shadowed stub below leaves a sentinel file when invoked, so "no call
+# happened" is asserted directly, not merely inferred from a graceful
+# failure — same technique §3 uses, extended with the sentinel.
+
+HOME_5="$TMP_ROOT/home-5"; mkdir -p "$HOME_5"
+CWD_5="$TMP_ROOT/cwd-5"; mkdir -p "$CWD_5"
+
+FAKE_BIN_5="$TMP_ROOT/fakebin-5"
+mkdir -p "$FAKE_BIN_5"
+SENTINEL_5="$TMP_ROOT/git-was-called-5"
+cat > "$FAKE_BIN_5/git" <<EOF
+#!/bin/sh
+touch "$SENTINEL_5"
+exit 1
+EOF
+chmod +x "$FAKE_BIN_5/git"
+
+# Case A: vcs key entirely absent from the payload.
+PAYLOAD_5A=$(cat <<EOF
+{"cwd":"$CWD_5","model":{"id":"m","display_name":"M"},
+ "context_window":{"context_window_size":100000,"used_percentage":10.0,
+   "total_input_tokens":0,"total_output_tokens":0}}
+EOF
+)
+rm -f "$SENTINEL_5"
+OUT_5A="$TMP_ROOT/out-5a"
+PATH="$FAKE_BIN_5:$PATH" HOME="$HOME_5" "$PYTHON_BIN" "$SCRIPT" <<<"$PAYLOAD_5A" > "$OUT_5A" 2>/dev/null
+STATUS_5A=$?
+LINE3_5A="$(sed -n '3p' "$OUT_5A")"
+
+if [ "$STATUS_5A" -eq 0 ]; then ok "R4: absent vcs key still exits 0"; else bad "R4: absent vcs key exit status was $STATUS_5A"; fi
+if [[ "$LINE3_5A" != *"⎇"* ]]; then
+  ok "R18/R3: absent vcs key omits the branch segment entirely"
+else
+  bad "R18/R3: absent vcs key unexpectedly rendered a branch segment (got: $LINE3_5A)"
+fi
+if [ ! -f "$SENTINEL_5" ]; then
+  ok "R18/R2: absent vcs key never shells out to git"
+else
+  bad "R18/R2: absent vcs key called the shadowed git stub (sentinel found) — fallback subprocess regression"
+fi
+
+# Case B: vcs present but branch is an empty string.
+PAYLOAD_5B=$(cat <<EOF
+{"cwd":"$CWD_5","model":{"id":"m"},
+ "context_window":{"context_window_size":100000,"used_percentage":10.0,
+   "total_input_tokens":0,"total_output_tokens":0},
+ "vcs":{"branch":""}}
+EOF
+)
+rm -f "$SENTINEL_5"
+OUT_5B="$TMP_ROOT/out-5b"
+PATH="$FAKE_BIN_5:$PATH" HOME="$HOME_5" "$PYTHON_BIN" "$SCRIPT" <<<"$PAYLOAD_5B" > "$OUT_5B" 2>/dev/null
+STATUS_5B=$?
+LINE3_5B="$(sed -n '3p' "$OUT_5B")"
+
+if [ "$STATUS_5B" -eq 0 ]; then ok "R4: empty vcs.branch still exits 0"; else bad "R4: empty vcs.branch exit status was $STATUS_5B"; fi
+if [[ "$LINE3_5B" != *"⎇"* ]]; then
+  ok "R18/R3: empty vcs.branch omits the branch segment entirely"
+else
+  bad "R18/R3: empty vcs.branch unexpectedly rendered a branch segment (got: $LINE3_5B)"
+fi
+if [ ! -f "$SENTINEL_5" ]; then
+  ok "R18/R2: empty vcs.branch never shells out to git"
+else
+  bad "R18/R2: empty vcs.branch called the shadowed git stub (sentinel found) — fallback subprocess regression"
 fi
 
 # ---------------------------------------------------------------------------

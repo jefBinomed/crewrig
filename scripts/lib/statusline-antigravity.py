@@ -6,15 +6,17 @@
 # sibling-module need) to $AGY_HOME/statusline.py, and invoked by
 # hooks/antigravity-statusline-shim.sh only when the render flag is enabled.
 #
-# Keeps unchanged from the user's original script: color(), get_git_branch(),
-# the three-line layout. Adds: a context-usage bar (R-less, mirrors
-# ccstatusline's context-bar segment), a VCS dirty-state suffix sourced from
-# the native payload alone (R18 — no extra subprocess), a TTL-cached
-# working-tree change count (R19), a labeled cost estimate (R17), and a
-# quota reset countdown. Two layout adjustments from JF, given after PLAN v5
-# was approved: the branch/changes segment moved from line 1 to line 3
-# (next to cwd), and the "Thinking: <state>" segment (agent_state) dropped
-# entirely.
+# Keeps unchanged from the user's original script: color(), the three-line
+# layout. Adds: a context-usage bar (R-less, mirrors ccstatusline's
+# context-bar segment), a VCS branch/dirty-state suffix sourced from the
+# native payload ALONE (R18 — no extra subprocess; no `git` fallback for a
+# missing/empty vcs.branch either — an absent branch is omitted per R3/R4,
+# never derived via a subprocess outside R19's own narrow carve-out), a
+# TTL-cached working-tree change count (R19), a labeled cost estimate (R17),
+# and a quota reset countdown. Two layout adjustments from JF, given after
+# PLAN v5 was approved: the branch/changes segment moved from line 1 to
+# line 3 (next to cwd), and the "Thinking: <state>" segment (agent_state)
+# dropped entirely.
 #
 # Blanket failure containment: json.load() is already guarded (exits 0 on a
 # malformed/absent payload). Everything after it — building line1/line2/
@@ -32,22 +34,6 @@ import hashlib
 
 def color(text, code):
     return f"\033[{code}m{text}\033[0m"
-
-
-def get_git_branch(cwd):
-    try:
-        result = subprocess.run(
-            ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-            timeout=0.5
-        )
-        if result.returncode == 0:
-            return result.stdout.strip()
-    except Exception:
-        pass
-    return ""
 
 
 def get_git_changes(cwd):
@@ -260,9 +246,11 @@ def main():
         # --- Line 3: cwd + VCS branch/dirty/changes (moved from line 1) ---
         cwd = data.get("cwd", os.getcwd())
         vcs = data.get("vcs", {}) or {}
+        # R18: branch comes from the native payload ONLY. No `git` subprocess
+        # fallback here — an empty/absent vcs.branch means the VCS segment is
+        # omitted entirely (R3/R4), not derived at the cost of a subprocess
+        # this script has no R19-style carve-out for.
         branch = vcs.get("branch", "")
-        if not branch:
-            branch = get_git_branch(cwd)
 
         line3 = [f"  cwd: {color(cwd, green)}"]
         if branch:

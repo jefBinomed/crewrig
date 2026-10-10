@@ -565,17 +565,27 @@ else
   fi
 fi
 
-WAS_ANY_ENABLED=0
-if [ "$USAGE_CAPTURE_ENABLED" = "true" ] || [ "$RENDER_ENABLED" = "true" ]; then
-  WAS_ANY_ENABLED=1
-fi
 IS_ANY_ENABLED=0
 if [ "$NEW_USAGE_CAPTURE_ENABLED" = "true" ] || [ "$NEW_RENDER_ENABLED" = "true" ]; then
   IS_ANY_ENABLED=1
 fi
 
-# R7 preview-and-choose: a foreign, non-us value transitioning to enabled.
-if [ "$WAS_ANY_ENABLED" -eq 0 ] && [ "$IS_ANY_ENABLED" -eq 1 ] && [ -n "$CURRENT_STATUSLINE" ] && [ "$STATUSLINE_INSTALLED_BY_US" -ne 1 ]; then
+# Whether statusLine.command needs to be (re)wired to us, or torn down, is
+# driven by STATUSLINE_INSTALLED_BY_US (the ACTUAL current wiring) rather
+# than the marker's stored flags — a marker that says "enabled" while
+# statusLine.command has since been hijacked by something else must still
+# rewire on re-enable, not silently no-op (i1-F2).
+NEEDS_WIRE=0
+if [ "$IS_ANY_ENABLED" -eq 1 ] && [ "$STATUSLINE_INSTALLED_BY_US" -ne 1 ]; then
+  NEEDS_WIRE=1
+fi
+NEEDS_REMOVE=0
+if [ "$IS_ANY_ENABLED" -eq 0 ] && [ "$STATUSLINE_INSTALLED_BY_US" -eq 1 ]; then
+  NEEDS_REMOVE=1
+fi
+
+# R7 preview-and-choose: a foreign, non-us value about to be (re)wired.
+if [ "$NEEDS_WIRE" -eq 1 ] && [ -n "$CURRENT_STATUSLINE" ]; then
   echo "  statusLine.command already carries a value this framework did not install:"
   echo "    $CURRENT_STATUSLINE"
   STATUSLINE_PREVIEW_ACTION=$(echo -e "keep-existing\nreplace-with-crewrig" | fzf --height 10% \
@@ -585,10 +595,11 @@ if [ "$WAS_ANY_ENABLED" -eq 0 ] && [ "$IS_ANY_ENABLED" -eq 1 ] && [ -n "$CURRENT
     NEW_USAGE_CAPTURE_ENABLED="false"
     NEW_RENDER_ENABLED="false"
     IS_ANY_ENABLED=0
+    NEEDS_WIRE=0
   fi
 fi
 
-if [ "$WAS_ANY_ENABLED" -eq 0 ] && [ "$IS_ANY_ENABLED" -eq 1 ]; then
+if [ "$NEEDS_WIRE" -eq 1 ]; then
   mkdir -p "$(dirname "$STATUSLINE_MARKER")"
   mkdir -p "$AGY_HOME"
   [ -f "$AGY_SETTINGS" ] || echo "{}" > "$AGY_SETTINGS"
@@ -602,7 +613,7 @@ if [ "$WAS_ANY_ENABLED" -eq 0 ] && [ "$IS_ANY_ENABLED" -eq 1 ]; then
   echo "  Antigravity status line wired to $STATUSLINE_ABS (in-repo absolute path)"
   warn_if_linked_worktree "$REPO_DIR" "usage capture"
   echo "  Prior statusLine.command (${CURRENT_STATUSLINE:-empty}) recorded at $STATUSLINE_MARKER"
-elif [ "$WAS_ANY_ENABLED" -eq 1 ] && [ "$IS_ANY_ENABLED" -eq 0 ] && [ "$STATUSLINE_INSTALLED_BY_US" -eq 1 ]; then
+elif [ "$NEEDS_REMOVE" -eq 1 ]; then
   # Full removal: restore priorStatusLineCommand, restore/delete statusline.py.
   PRIOR_CMD="$(jq -r '.priorStatusLineCommand // empty' "$STATUSLINE_MARKER" 2>/dev/null)"
   backup_file "$AGY_SETTINGS"
