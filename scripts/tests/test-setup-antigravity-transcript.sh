@@ -999,5 +999,326 @@ else
 fi
 
 echo ""
+echo "§8 unified statusline install block: two-flag marker, migration, R7, keep/remove, shim composition (spec 0249 delta-01, PLAN v5 steps 4-5, 8)"
+
+# §8 exercises scripts/setup-antigravity-interactive.sh's unified "Antigravity
+# status line" install block the same way §4's R16 subsection does: the block
+# is bounded by its own header/footer comments, extracted verbatim with awk,
+# and sourced in a subshell with `fzf` stubbed by a positional-answer
+# function and HOME/AGY_HOME/CREWRIG_USAGE_ROOT sandboxed to a temp root. This
+# exercises the real install/migrate/remove logic, not a hand-rewritten
+# approximation of it.
+BLOCK_8="$TMP_ROOT/statusline-install-block.sh"
+awk '/^# --- Antigravity status line: usage capture \+ enhanced rendering \(opt-in\) ---$/{p=1}
+     p && /^# --- MemPalace session-start check/{p=0}
+     p{print}' "$SETUP" > "$BLOCK_8"
+if [ -s "$BLOCK_8" ]; then
+  ok "§8: the unified statusline install block was located in the setup script"
+else
+  bad "§8: could not locate the unified statusline install block — the marker comment moved?"
+fi
+# Tripwire: a runaway extraction would capture the ~/.gemini/config/AGENTS.md
+# generation block that follows, whose writes this suite's own header promises
+# never to make outside a temp root.
+if grep -q 'GEMINI_MD_TARGET' "$BLOCK_8"; then
+  bad "§8: the extraction ran away past the install block — end marker moved?"
+else
+  ok "§8: the extraction is bounded to the install block"
+fi
+
+# run_statusline_block <agy_home> <usage_root> <fzf answer> [fzf answer...]
+# Sources BLOCK_8 in a subshell (stubs never leak into the rest of the suite)
+# with `fzf` answering positionally, one call per listed answer -- the same
+# counter-file technique §4's run_gate() uses, generalized past two prompts
+# since this block can show two, three (R7), or zero (already-settled state).
+run_statusline_block() {
+  local agy_home="$1" usage_root="$2"
+  shift 2
+  local -a answers=("$@")
+  (
+    _IDX_FILE="$TMP_ROOT/s8-fzf-idx.$$.$RANDOM"
+    echo 0 > "$_IDX_FILE"
+    fzf() {
+      cat >/dev/null
+      local i
+      i="$(cat "$_IDX_FILE")"
+      echo $((i + 1)) > "$_IDX_FILE"
+      printf '%s\n' "${answers[$i]}"
+    }
+    # shellcheck disable=SC2034
+    AGY_HOME="$agy_home"
+    # shellcheck disable=SC2034
+    CREWRIG_USAGE_ROOT="$usage_root"
+    HOME="$agy_home"
+    # shellcheck source=/dev/null
+    . "$BLOCK_8"
+  )
+}
+
+# --- §8.1 two independent flags toggle without re-touching statusLine.command
+# when the slot is already wired to us (PLAN v5 step 4) ---------------------
+AGY_HOME_S1="$TMP_ROOT/s8-agyhome-1"; mkdir -p "$AGY_HOME_S1"
+USAGE_ROOT_S1="$TMP_ROOT/s8-usageroot-1"; mkdir -p "$USAGE_ROOT_S1/state"
+AGY_SETTINGS_S1="$AGY_HOME_S1/settings.json"
+MARKER_S1="$USAGE_ROOT_S1/state/antigravity-statusline.json"
+printf '{"statusLine":{"command":"%s"}}' "$STATUSLINE_ABS" > "$AGY_SETTINGS_S1"
+cat > "$MARKER_S1" <<JSON
+{"priorStatusLineCommand":"","installedStatusLineCommand":"$STATUSLINE_ABS","installedBy":"test","usageCaptureEnabled":true,"renderEnabled":false}
+JSON
+SETTINGS_BEFORE_S1="$(cat "$AGY_SETTINGS_S1")"
+
+# usage-capture is installed+true -> keep/remove prompt, answer "keep";
+# render is installed-but-false -> enable prompt, answer "yes".
+run_statusline_block "$AGY_HOME_S1" "$USAGE_ROOT_S1" "keep" "yes" >/dev/null 2>&1
+
+USAGE_AFTER_S1="$(jq -r '.usageCaptureEnabled' "$MARKER_S1" 2>/dev/null)"
+RENDER_AFTER_S1="$(jq -r '.renderEnabled' "$MARKER_S1" 2>/dev/null)"
+SETTINGS_AFTER_S1="$(cat "$AGY_SETTINGS_S1")"
+
+if [ "$USAGE_AFTER_S1" = "true" ] && [ "$RENDER_AFTER_S1" = "true" ]; then
+  ok "§8.1: usage capture (kept) and render (newly enabled) toggle independently"
+else
+  bad "§8.1: expected usageCaptureEnabled=true, renderEnabled=true (got usage=$USAGE_AFTER_S1, render=$RENDER_AFTER_S1)"
+fi
+if [ "$SETTINGS_AFTER_S1" = "$SETTINGS_BEFORE_S1" ]; then
+  ok "§8.1: statusLine.command is NOT re-touched when the slot is already wired to us"
+else
+  bad "§8.1: settings.json was rewritten even though the slot was already ours (before: $SETTINGS_BEFORE_S1, after: $SETTINGS_AFTER_S1)"
+fi
+if [ -f "$AGY_HOME_S1/statusline.py" ] && cmp -s "$AGY_HOME_S1/statusline.py" "$REPO_DIR/scripts/lib/statusline-antigravity.py"; then
+  ok "§8.1: enabling render copies the vendored script to AGY_HOME"
+else
+  bad "§8.1: the vendored script was not copied (or does not match the source) after enabling render"
+fi
+
+echo ""
+
+# --- §8.2 legacy-marker migration, persisted via the atomic .tmp+mv pattern,
+# fired only once (PLAN v5 step 4, v3-F2/v4-F2 fix) -------------------------
+AGY_HOME_S2="$TMP_ROOT/s8-agyhome-2"; mkdir -p "$AGY_HOME_S2"
+USAGE_ROOT_S2="$TMP_ROOT/s8-usageroot-2"; mkdir -p "$USAGE_ROOT_S2/state"
+AGY_SETTINGS_S2="$AGY_HOME_S2/settings.json"
+MARKER_S2="$USAGE_ROOT_S2/state/antigravity-statusline.json"
+printf '{"statusLine":{"command":"%s"}}' "$STATUSLINE_ABS" > "$AGY_SETTINGS_S2"
+# Legacy schema: neither usageCaptureEnabled nor renderEnabled present. Per
+# the pre-ticket code, the marker's mere existence meant usage capture was on.
+cat > "$MARKER_S2" <<JSON
+{"priorStatusLineCommand":"","installedStatusLineCommand":"$STATUSLINE_ABS","installedBy":"legacy-test"}
+JSON
+
+FIRST_RUN_OUT_S2="$(run_statusline_block "$AGY_HOME_S2" "$USAGE_ROOT_S2" "keep" "no" 2>&1)"
+
+MIGRATED_USAGE_S2="$(jq -r '.usageCaptureEnabled' "$MARKER_S2" 2>/dev/null)"
+MIGRATED_RENDER_S2="$(jq -r '.renderEnabled' "$MARKER_S2" 2>/dev/null)"
+MIGRATED_INSTALLED_BY_S2="$(jq -r '.installedBy' "$MARKER_S2" 2>/dev/null)"
+
+if [ "$MIGRATED_USAGE_S2" = "true" ] && [ "$MIGRATED_RENDER_S2" = "false" ]; then
+  ok "§8.2: a legacy marker (neither key present) is migrated to usageCaptureEnabled:true, renderEnabled:false"
+else
+  bad "§8.2: migration produced usage=$MIGRATED_USAGE_S2 render=$MIGRATED_RENDER_S2 (want true/false)"
+fi
+if [ "$MIGRATED_INSTALLED_BY_S2" = "legacy-test" ]; then
+  ok "§8.2: the migration preserves the marker's pre-existing fields verbatim"
+else
+  bad "§8.2: the migration lost or altered a pre-existing field (installedBy=$MIGRATED_INSTALLED_BY_S2)"
+fi
+if [ ! -f "${MARKER_S2}.tmp" ]; then
+  ok "§8.2: the migration's atomic .tmp file does not survive (consumed by mv)"
+else
+  bad "§8.2: a leftover ${MARKER_S2}.tmp survives the migration write"
+fi
+case "$FIRST_RUN_OUT_S2" in
+  *"Migrated legacy statusline marker"*) ok "§8.2: the migration message is printed on first encounter" ;;
+  *) bad "§8.2: no migration message printed on first encounter (got: $FIRST_RUN_OUT_S2)" ;;
+esac
+
+SECOND_RUN_OUT_S2="$(run_statusline_block "$AGY_HOME_S2" "$USAGE_ROOT_S2" "keep" "no" 2>&1)"
+case "$SECOND_RUN_OUT_S2" in
+  *"Migrated legacy statusline marker"*) bad "§8.2: the migration message is printed again on a second run (should fire once)" ;;
+  *) ok "§8.2: the migration message does not re-print once the marker carries both keys" ;;
+esac
+
+echo ""
+
+# --- §8.3 R7 preview-and-choose for the render feature, dual backup_file
+# (PLAN v5 step 4) -----------------------------------------------------------
+AGY_HOME_S3="$TMP_ROOT/s8-agyhome-3"; mkdir -p "$AGY_HOME_S3"
+USAGE_ROOT_S3="$TMP_ROOT/s8-usageroot-3"; mkdir -p "$USAGE_ROOT_S3/state"
+AGY_SETTINGS_S3="$AGY_HOME_S3/settings.json"
+FOREIGN_CMD_S3="/usr/bin/foreign-statusline-tool"
+printf '{"statusLine":{"command":"%s"}}' "$FOREIGN_CMD_S3" > "$AGY_SETTINGS_S3"
+# An existing, foreign statusline.py the user already owns: backup_file must
+# snapshot it before it is overwritten by the vendored copy.
+printf 'ORIGINAL-USER-SCRIPT' > "$AGY_HOME_S3/statusline.py"
+
+# No marker exists yet: usage capture "no", render "yes" -> R7 preview fires
+# (foreign value, transitioning from fully-disabled to enabled) -> "replace".
+run_statusline_block "$AGY_HOME_S3" "$USAGE_ROOT_S3" "no" "yes" "replace-with-crewrig" >/dev/null 2>&1
+
+MARKER_S3="$USAGE_ROOT_S3/state/antigravity-statusline.json"
+COMMAND_AFTER_S3="$(jq -r '.statusLine.command // empty' "$AGY_SETTINGS_S3" 2>/dev/null)"
+PRIOR_AFTER_S3="$(jq -r '.priorStatusLineCommand // empty' "$MARKER_S3" 2>/dev/null)"
+
+if [ "$COMMAND_AFTER_S3" = "$STATUSLINE_ABS" ]; then
+  ok "§8.3: R7 'replace' wires statusLine.command to CrewRig's absolute path"
+else
+  bad "§8.3: statusLine.command after replace is '$COMMAND_AFTER_S3', want '$STATUSLINE_ABS'"
+fi
+if [ "$PRIOR_AFTER_S3" = "$FOREIGN_CMD_S3" ]; then
+  ok "§8.3: the replaced foreign command is recorded as priorStatusLineCommand"
+else
+  bad "§8.3: priorStatusLineCommand is '$PRIOR_AFTER_S3', want '$FOREIGN_CMD_S3'"
+fi
+if ls "$AGY_SETTINGS_S3".bak.* >/dev/null 2>&1; then
+  ok "§8.3: settings.json is backed up before the replace transform"
+else
+  bad "§8.3: no settings.json.bak.* found after the replace transform"
+fi
+SCRIPT_BACKUP_S3="$(ls -1 "$AGY_HOME_S3/statusline.py".bak.* 2>/dev/null | head -n1)"
+if [ -n "$SCRIPT_BACKUP_S3" ] && [ "$(cat "$SCRIPT_BACKUP_S3")" = "ORIGINAL-USER-SCRIPT" ]; then
+  ok "§8.3: the pre-existing statusline.py is backed up (dual backup_file) with its original content intact"
+else
+  bad "§8.3: no statusline.py.bak.* found with the original content (got: $SCRIPT_BACKUP_S3)"
+fi
+if cmp -s "$AGY_HOME_S3/statusline.py" "$REPO_DIR/scripts/lib/statusline-antigravity.py"; then
+  ok "§8.3: statusline.py now holds the vendored script's content"
+else
+  bad "§8.3: statusline.py does not match the vendored source after install"
+fi
+
+echo ""
+
+# --- §8.4 keep/remove restores both artifacts (PLAN v5 step 4) -------------
+# Case A: a prior backup exists -> statusline.py is restored FROM it.
+AGY_HOME_S4A="$TMP_ROOT/s8-agyhome-4a"; mkdir -p "$AGY_HOME_S4A"
+USAGE_ROOT_S4A="$TMP_ROOT/s8-usageroot-4a"; mkdir -p "$USAGE_ROOT_S4A/state"
+AGY_SETTINGS_S4A="$AGY_HOME_S4A/settings.json"
+MARKER_S4A="$USAGE_ROOT_S4A/state/antigravity-statusline.json"
+PRIOR_CMD_S4A="/usr/bin/original-foreign-tool"
+printf '{"statusLine":{"command":"%s"}}' "$STATUSLINE_ABS" > "$AGY_SETTINGS_S4A"
+cat > "$MARKER_S4A" <<JSON
+{"priorStatusLineCommand":"$PRIOR_CMD_S4A","installedStatusLineCommand":"$STATUSLINE_ABS","installedBy":"test","usageCaptureEnabled":true,"renderEnabled":true}
+JSON
+printf 'VENDORED-INSTALLED-CONTENT' > "$AGY_HOME_S4A/statusline.py"
+printf 'ORIGINAL-BEFORE-INSTALL' > "$AGY_HOME_S4A/statusline.py.bak.20200101-000000"
+
+# Both already installed+true -> both prompts are keep/remove; answer "remove".
+run_statusline_block "$AGY_HOME_S4A" "$USAGE_ROOT_S4A" "remove" "remove" >/dev/null 2>&1
+
+COMMAND_AFTER_S4A="$(jq -r '.statusLine.command // empty' "$AGY_SETTINGS_S4A" 2>/dev/null)"
+if [ "$COMMAND_AFTER_S4A" = "$PRIOR_CMD_S4A" ]; then
+  ok "§8.4a: full removal restores statusLine.command to its prior value"
+else
+  bad "§8.4a: statusLine.command after removal is '$COMMAND_AFTER_S4A', want '$PRIOR_CMD_S4A'"
+fi
+if [ ! -f "$MARKER_S4A" ]; then
+  ok "§8.4a: the marker file is deleted on full removal"
+else
+  bad "§8.4a: the marker file still exists after full removal"
+fi
+if [ -f "$AGY_HOME_S4A/statusline.py" ] && [ "$(cat "$AGY_HOME_S4A/statusline.py")" = "ORIGINAL-BEFORE-INSTALL" ]; then
+  ok "§8.4a: statusline.py is restored from its pre-install backup"
+else
+  bad "§8.4a: statusline.py was not correctly restored (got: $(cat "$AGY_HOME_S4A/statusline.py" 2>/dev/null))"
+fi
+if [ ! -f "$AGY_HOME_S4A/statusline.py.bak.20200101-000000" ]; then
+  ok "§8.4a: the consumed backup file no longer exists at its old path"
+else
+  bad "§8.4a: the backup file was not consumed (mv'd) during restore"
+fi
+
+# Case B: no backup ever existed -> statusline.py is deleted entirely.
+AGY_HOME_S4B="$TMP_ROOT/s8-agyhome-4b"; mkdir -p "$AGY_HOME_S4B"
+USAGE_ROOT_S4B="$TMP_ROOT/s8-usageroot-4b"; mkdir -p "$USAGE_ROOT_S4B/state"
+AGY_SETTINGS_S4B="$AGY_HOME_S4B/settings.json"
+MARKER_S4B="$USAGE_ROOT_S4B/state/antigravity-statusline.json"
+printf '{"statusLine":{"command":"%s"}}' "$STATUSLINE_ABS" > "$AGY_SETTINGS_S4B"
+cat > "$MARKER_S4B" <<JSON
+{"priorStatusLineCommand":"","installedStatusLineCommand":"$STATUSLINE_ABS","installedBy":"test","usageCaptureEnabled":true,"renderEnabled":true}
+JSON
+printf 'VENDORED-INSTALLED-CONTENT' > "$AGY_HOME_S4B/statusline.py"
+
+run_statusline_block "$AGY_HOME_S4B" "$USAGE_ROOT_S4B" "remove" "remove" >/dev/null 2>&1
+
+COMMAND_AFTER_S4B="$(jq -r '.statusLine | has("command")' "$AGY_SETTINGS_S4B" 2>/dev/null)"
+if [ "$COMMAND_AFTER_S4B" = "false" ]; then
+  ok "§8.4b: full removal with an empty prior deletes the statusLine.command key"
+else
+  bad "§8.4b: statusLine.command key still present after removal with an empty prior"
+fi
+if [ ! -f "$AGY_HOME_S4B/statusline.py" ]; then
+  ok "§8.4b: statusline.py is deleted when no pre-install backup ever existed"
+else
+  bad "§8.4b: statusline.py still exists after removal with no backup to restore"
+fi
+
+echo ""
+
+# --- §8.5 the shim's composed-output contract, all four states (PLAN v5 step
+# 5/8): render-only, prior-only, composed, and the load-bearing both-empty
+# case asserted as an EXACT BYTE COUNT (v4-F1: an earlier revision emitted a
+# bare newline here instead of zero bytes, and a $(...) capture cannot tell
+# the two apart since command substitution strips trailing newlines) --------
+AGY_HOME_S5="$TMP_ROOT/s8-agyhome-5"; mkdir -p "$AGY_HOME_S5"
+cat > "$AGY_HOME_S5/statusline.py" <<'EOF'
+#!/bin/sh
+printf 'RENDERED-OUTPUT'
+EOF
+chmod +x "$AGY_HOME_S5/statusline.py"
+USAGE_ROOT_S5="$TMP_ROOT/s8-usageroot-5"; mkdir -p "$USAGE_ROOT_S5/state"
+MARKER_S5="$USAGE_ROOT_S5/state/antigravity-statusline.json"
+
+run_shim_8() {
+  local render="$1" prior="$2" payload="$3" out_file="$4"
+  jq -n --argjson render "$render" --arg prior "$prior" \
+    '{renderEnabled: $render, priorStatusLineCommand: $prior}' > "$MARKER_S5"
+  : > "$out_file"
+  CREWRIG_USAGE_ROOT="$USAGE_ROOT_S5" \
+  CREWRIG_USAGE_CAPTURE_TEST=1 \
+  CREWRIG_USAGE_CAPTURE_CLI="$TEST_CLI_JS" \
+  AGY_HOME="$AGY_HOME_S5" \
+  MOCK_PAYLOAD_OUT="$TMP_ROOT/s8-mock-payload.out" \
+    bash "$STATUSLINE_SRC" <<<"$payload" > "$out_file" 2>/dev/null
+  echo $?
+}
+
+# render-only
+OUT_S5_RENDER="$TMP_ROOT/s8-out-render"
+STATUS_S5_RENDER="$(run_shim_8 true "" '{"turn":1}' "$OUT_S5_RENDER")"
+if [ "$STATUS_S5_RENDER" -eq 0 ] && [ "$(cat "$OUT_S5_RENDER")" = "RENDERED-OUTPUT" ]; then
+  ok "§8.5: render-only state emits the renderer's output alone"
+else
+  bad "§8.5: render-only state got '$(cat "$OUT_S5_RENDER" 2>/dev/null)' (exit $STATUS_S5_RENDER)"
+fi
+
+# prior-only
+OUT_S5_PRIOR="$TMP_ROOT/s8-out-prior"
+STATUS_S5_PRIOR="$(run_shim_8 false "cat" '{"turn":2}' "$OUT_S5_PRIOR")"
+if [ "$STATUS_S5_PRIOR" -eq 0 ] && [ "$(cat "$OUT_S5_PRIOR")" = '{"turn":2}' ]; then
+  ok "§8.5: prior-only state emits the prior command's own output alone"
+else
+  bad "§8.5: prior-only state got '$(cat "$OUT_S5_PRIOR" 2>/dev/null)' (exit $STATUS_S5_PRIOR)"
+fi
+
+# composed: both non-empty, joined by " | "
+OUT_S5_BOTH="$TMP_ROOT/s8-out-both"
+STATUS_S5_BOTH="$(run_shim_8 true "cat" '{"turn":3}' "$OUT_S5_BOTH")"
+if [ "$STATUS_S5_BOTH" -eq 0 ] && [ "$(cat "$OUT_S5_BOTH")" = 'RENDERED-OUTPUT | {"turn":3}' ]; then
+  ok "§8.5: both non-empty states compose as 'RENDERED | PRIOR' joined by ' | '"
+else
+  bad "§8.5: composed state got '$(cat "$OUT_S5_BOTH" 2>/dev/null)' (exit $STATUS_S5_BOTH)"
+fi
+
+# both-empty: renderEnabled false, no prior command -> EXACTLY ZERO BYTES.
+OUT_S5_EMPTY="$TMP_ROOT/s8-out-empty"
+STATUS_S5_EMPTY="$(run_shim_8 false "" '{"turn":4}' "$OUT_S5_EMPTY")"
+BYTES_S5_EMPTY="$(wc -c < "$OUT_S5_EMPTY" | tr -d ' ')"
+if [ "$STATUS_S5_EMPTY" -eq 0 ] && [ "$BYTES_S5_EMPTY" -eq 0 ]; then
+  ok "§8.5: the both-empty state produces EXACTLY ZERO bytes of stdout, not a bare newline"
+else
+  bad "§8.5: both-empty state produced $BYTES_S5_EMPTY byte(s) of stdout (exit $STATUS_S5_EMPTY) -- want 0 bytes exactly"
+fi
+
+echo ""
 echo "Summary: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
